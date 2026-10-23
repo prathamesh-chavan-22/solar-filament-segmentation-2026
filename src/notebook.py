@@ -54,6 +54,8 @@ MASK_RATIO = 2                   # finer mask head than the default 4 — filame
 CONF_GRID = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60]
 MIN_AREA_GRID = [0, 100, 300, 600, 1000]   # pixels at 2048²
 PRED_CONF = 0.05                 # low floor; the tuned threshold is applied afterwards
+ERODE_PX = 1                     # upsampled 1024→2048 masks are ~1px too fat (+0.018 hold-out PQ)
+FOLD_WEIGHTS = os.environ.get("FOLD_WEIGHTS")   # reuse an existing hold-out model instead of retraining it
 
 WORK = Path(os.environ.get("WORK_DIR", "/kaggle/working" if Path("/kaggle/working").exists() else "work"))
 WORK.mkdir(parents=True, exist_ok=True)
@@ -185,7 +187,7 @@ def train(data, name):
 
 
 t0 = time.time()
-best_fold = train(data_yaml, f"fold{VAL_FOLD}")
+best_fold = Path(FOLD_WEIGHTS) if FOLD_WEIGHTS else train(data_yaml, f"fold{VAL_FOLD}")
 print(f"trained in {(time.time() - t0) / 60:.1f} min → {best_fold}")
 
 # %% [markdown]
@@ -213,6 +215,9 @@ def postprocess(r):
     probs = r.masks.data.float()                                     # (N, 1024, 1024)
     probs = torch.nn.functional.interpolate(probs[None], size=(H, W), mode="bilinear")[0]
     masks = (probs > 0.5).cpu().numpy()
+    if ERODE_PX:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * ERODE_PX + 1,) * 2)
+        masks = np.stack([cv2.erode(m.astype(np.uint8), k) for m in masks]).astype(bool)
     confs = r.boxes.conf.cpu().numpy()
     claimed = np.zeros((H, W), bool)
     inst = []
