@@ -54,6 +54,10 @@ class CropDataset(Dataset):
 
 
 def build_model(encoder="resnet34", pretrained=True):
+    """smp U-Net for CNN encoders; ``dinov2-{s,b,l,g}`` gives the LoRA-adapted ViT U-Net (filament.vit)."""
+    if encoder.startswith("dinov2"):
+        from .vit import ViTUNet
+        return ViTUNet(encoder, pretrained=pretrained, lora_rank=int(os.environ.get("LORA_RANK", 16)))
     return smp.Unet(encoder, encoder_weights="imagenet" if pretrained else None, in_channels=1, classes=1)
 
 
@@ -88,7 +92,8 @@ def train(model, images, targets, *, steps, batch, crop, lr, device, log_every=2
     model.to(device).train()
     net = speedups(model, device, channels_last, compile_model) if (channels_last or compile_model) else model
     fmt = torch.channels_last if channels_last else torch.contiguous_format
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4, fused=device.type == "cuda")
+    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=1e-4,
+                            fused=device.type == "cuda")
     warmup = max(steps // 20, 1)
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: (s + 1) / warmup if s < warmup else 0.5 * (1 + math.cos(math.pi * (s - warmup) / (steps - warmup))))
