@@ -36,5 +36,6 @@ kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.c
   | v1 | YOLO11m-seg, 40 ep | 0.313 | 0.28 |
   | v2 | v1 + full fit + 1 px erosion | 0.331 | 0.30 |
   | u1 | semantic U-Net r34@1024, soft annotator-mean target, D4 TTA, hysteresis components (`src/unet_pipeline.py`) | 0.407 | **0.35** |
+  | cv1 | 5-fold u1 ensemble, rules tuned on all 707 OOF images (`src/unet_cv.py` + `src/unet_submit.py`) | 0.417 (OOF, all folds) | **0.35** |
 - Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is 0.69 under PQ (pre-Aug-7 scores like "0.70" were Dice and are not comparable).
 - A known leaderboard exploit (partial / empty submissions) exists; this pipeline always predicts on all 180 test images.
