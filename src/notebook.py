@@ -54,8 +54,16 @@ MASK_RATIO = 2                   # finer mask head than the default 4 — filame
 CONF_GRID = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60]
 MIN_AREA_GRID = [0, 100, 300, 600, 1000]   # pixels at 2048²
 PRED_CONF = 0.05                 # low floor; the tuned threshold is applied afterwards
-ERODE_PX = 1                     # upsampled 1024→2048 masks are ~1px too fat (+0.018 hold-out PQ)
+ERODE_GRID = [0, 1]              # px erosion; upsampled 1024→2048 masks were ~1px too fat (+0.018 hold-out PQ)
 FOLD_WEIGHTS = os.environ.get("FOLD_WEIGHTS")   # reuse an existing hold-out model instead of retraining it
+INIT_WEIGHTS = os.environ.get("INIT_WEIGHTS") or MODEL   # e.g. fine-tune tiles from a global model
+
+# Tiled mode: train/predict on native-resolution 1024² tiles of the 2048² disk instead of downscaling.
+TILED = os.environ.get("TILED", "0") == "1"
+TILE = 1024
+TRAIN_TILE_ORIGINS = [(0, 0), (0, 1024), (1024, 0), (1024, 1024)]                       # 4 quadrants
+INFER_TILE_ORIGINS = [(y, x) for y in (0, 512, 1024) for x in (0, 512, 1024)]           # 9 tiles, 50% overlap
+TILE_MERGE_FRAC = 0.3            # merge cross-tile instances when overlap / smaller area exceeds this
 
 WORK = Path(os.environ.get("WORK_DIR", "/kaggle/working" if Path("/kaggle/working").exists() else "work"))
 WORK.mkdir(parents=True, exist_ok=True)
@@ -140,17 +148,48 @@ def yolo_lines(record_id):
     return lines
 
 
+def load_gray(path):
+    return cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+
+
+def tile_lines(record_id, ty, tx):
+    """Rasterise each filament, crop the tile, re-trace contours → YOLO polygons normalised to the tile."""
+    lines = []
+    for a in anns_by_record[record_id]:
+        if not any(len(p) >= 6 for p in a["segmentation"]):
+            continue
+        crop = mask_utils.decode(ann_rle(a))[ty:ty + TILE, tx:tx + TILE]
+        if crop.sum() < 20:
+            continue
+        contours, _ = cv2.findContours(np.ascontiguousarray(crop), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        polys = [c.reshape(-1).astype(float).tolist() for c in contours if len(c) >= 3]
+        if not polys:
+            continue
+        seg = np.concatenate(merge_multi_segment(polys), 0) if len(polys) > 1 else np.array(polys[0]).reshape(-1, 2)
+        seg = np.clip(seg / TILE, 0, 1).reshape(-1)
+        lines.append("0 " + " ".join(f"{v:.5f}" for v in seg))
+    return lines
+
+
 def load_resized(path):
     img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     return cv2.cvtColor(cv2.resize(img, (IMGSZ, IMGSZ), interpolation=cv2.INTER_AREA), cv2.COLOR_GRAY2BGR)
 
 
 def build_dataset(train_df, val_df, name):
-    root = YOLO_DIR / name
+    root = YOLO_DIR / (f"{name}_tiled" if TILED else name)
     for split, df in (("train", train_df), ("val", val_df)):
         (root / "images" / split).mkdir(parents=True, exist_ok=True)
         (root / "labels" / split).mkdir(parents=True, exist_ok=True)
         for row in df.itertuples():
+            if TILED:
+                img = load_gray(TRAIN_IMG_DIR / row.file_name)
+                for ty, tx in TRAIN_TILE_ORIGINS:
+                    name = f"{row.stem}_{ty}_{tx}"
+                    cv2.imwrite(str(root / "images" / split / f"{name}.jpg"), img[ty:ty + TILE, tx:tx + TILE],
+                                [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    (root / "labels" / split / f"{name}.txt").write_text("\n".join(tile_lines(row.train_record, ty, tx)))
+                continue
             img_out = root / "images" / split / f"{row.stem}.jpg"
             if not img_out.exists():
                 cv2.imwrite(str(img_out), load_resized(TRAIN_IMG_DIR / row.file_name), [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -181,7 +220,7 @@ TRAIN_ARGS = dict(
 
 
 def train(data, name):
-    model = YOLO(MODEL)
+    model = YOLO(INIT_WEIGHTS)
     model.train(data=str(data), name=name, **TRAIN_ARGS)
     return Path(model.trainer.best)
 
@@ -192,42 +231,86 @@ print(f"trained in {(time.time() - t0) / 60:.1f} min → {best_fold}")
 
 # %% [markdown]
 # ## Inference + post-processing
-# Predicted masks are upsampled to 2048², overlaps are resolved greedily by confidence (higher-confidence instance keeps the pixels),
-# and each instance is RLE-encoded. Conf / min-area thresholds are applied afterwards so one prediction pass serves the whole sweep.
+# Global mode upsamples 1024 masks to 2048²; tiled mode pastes native-resolution tile masks and unions cross-tile pieces.
+# Masks are then optionally eroded and overlaps resolved greedily by confidence. Erosion / conf / min-area are tuned on the
+# hold-out from a single prediction pass.
 
 # %%
-def predict_instances(model, paths, batch=8):
-    """→ {stem: [(rle, conf, area), ...]} after de-overlap, sorted by conf desc."""
-    out = {}
-    for i in tqdm(range(0, len(paths), batch), desc="predict"):
-        chunk = paths[i:i + batch]
-        imgs = [load_resized(p) for p in chunk]
-        results = model.predict(imgs, imgsz=IMGSZ, conf=PRED_CONF, iou=0.5, retina_masks=True,
-                                max_det=100, verbose=False, half=True)
-        for path, r in zip(chunk, results):
-            out[Path(path).stem] = postprocess(r)
-    return out
+def encode(m):
+    return mask_utils.encode(np.asfortranarray(m.astype(np.uint8)))
 
 
-def postprocess(r):
+def predict_global(model, path):
+    """Downscaled full disk → masks upsampled to 2048²."""
+    r = model.predict([load_resized(path)], imgsz=IMGSZ, conf=PRED_CONF, iou=0.5, retina_masks=True,
+                      max_det=100, verbose=False, half=True)[0]
     if r.masks is None or len(r.masks) == 0:
+        return [], np.zeros(0)
+    probs = torch.nn.functional.interpolate(r.masks.data.float()[None], size=(H, W), mode="bilinear")[0]
+    return [encode(m) for m in (probs > 0.5).cpu().numpy()], r.boxes.conf.cpu().numpy()
+
+
+def predict_tiled(model, path):
+    """9 overlapping native-resolution tiles → instances pasted on the 2048² canvas, cross-tile duplicates/cuts unioned."""
+    img = load_gray(path)
+    tiles = [cv2.cvtColor(img[y:y + TILE, x:x + TILE], cv2.COLOR_GRAY2BGR) for y, x in INFER_TILE_ORIGINS]
+    results = model.predict(tiles, imgsz=TILE, conf=PRED_CONF, iou=0.5, retina_masks=True,
+                            max_det=100, verbose=False, half=True)
+    rles, confs, tile_ids = [], [], []
+    for t, ((y, x), r) in enumerate(zip(INFER_TILE_ORIGINS, results)):
+        if r.masks is None:
+            continue
+        for m, c in zip(r.masks.data.cpu().numpy() > 0.5, r.boxes.conf.cpu().numpy()):
+            if m.any():
+                full = np.zeros((H, W), np.uint8)
+                full[y:y + TILE, x:x + TILE] = m
+                rles.append(encode(full)); confs.append(float(c)); tile_ids.append(t)
+    if not rles:
+        return [], np.zeros(0)
+    frac = np.asarray(mask_utils.iou(rles, rles, [1] * len(rles)))     # crowd IoU: inter / area(row)
+    frac = np.maximum(frac, frac.T)                                     # inter / min(area)
+    parent = list(range(len(rles)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for i in range(len(rles)):
+        for j in range(i + 1, len(rles)):
+            if tile_ids[i] != tile_ids[j] and frac[i, j] > TILE_MERGE_FRAC:
+                parent[find(i)] = find(j)
+    groups = defaultdict(list)
+    for i in range(len(rles)):
+        groups[find(i)].append(i)
+    return ([mask_utils.merge([rles[i] for i in g]) for g in groups.values()],
+            np.array([max(confs[i] for i in g) for g in groups.values()]))
+
+
+def predict_raw(model, paths):
+    """→ {stem: (rles, confs)} before post-processing."""
+    fn = predict_tiled if TILED else predict_global
+    return {Path(p).stem: fn(model, p) for p in tqdm(paths, desc="predict")}
+
+
+def postprocess(rles, confs, erode_px):
+    """Erode, then resolve overlaps greedily by confidence → [(rle, conf, area)] sorted by conf desc."""
+    if not len(rles):
         return []
-    probs = r.masks.data.float()                                     # (N, 1024, 1024)
-    probs = torch.nn.functional.interpolate(probs[None], size=(H, W), mode="bilinear")[0]
-    masks = (probs > 0.5).cpu().numpy()
-    if ERODE_PX:
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * ERODE_PX + 1,) * 2)
-        masks = np.stack([cv2.erode(m.astype(np.uint8), k) for m in masks]).astype(bool)
-    confs = r.boxes.conf.cpu().numpy()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * erode_px + 1,) * 2) if erode_px else None
     claimed = np.zeros((H, W), bool)
     inst = []
     for k in np.argsort(-confs):
-        m = masks[k] & ~claimed
+        full = mask_utils.decode(rles[k])
+        if kernel is not None:
+            full = cv2.erode(full, kernel)
+        full = full.astype(bool)
+        m = full & ~claimed
         area = int(m.sum())
-        if area == 0 or area < 0.5 * masks[k].sum():                 # mostly swallowed by a stronger instance
+        if area == 0 or area < 0.5 * full.sum():                      # mostly swallowed by a stronger instance
             continue
         claimed |= m
-        inst.append((mask_utils.encode(np.asfortranarray(m.astype(np.uint8))), float(confs[k]), area))
+        inst.append((encode(m), float(confs[k]), area))
     return inst
 
 
@@ -277,18 +360,21 @@ if others:
 
 # %%
 val_model = YOLO(best_fold)
-val_inst = predict_instances(val_model, [TRAIN_IMG_DIR / f for f in val_df.file_name])
+val_raw = predict_raw(val_model, [TRAIN_IMG_DIR / f for f in val_df.file_name])
 
 sweep = []
-for c in CONF_GRID:
-    for a in MIN_AREA_GRID:
-        pq, st = pq_score({s: select(v, c, a) for s, v in val_inst.items()}, val_records)
-        sweep.append(dict(conf=c, min_area=a, PQ=pq, **st))
+for e in ERODE_GRID:
+    val_inst = {s: postprocess(*v, e) for s, v in val_raw.items()}
+    for c in CONF_GRID:
+        for a in MIN_AREA_GRID:
+            pq, st = pq_score({s: select(v, c, a) for s, v in val_inst.items()}, val_records)
+            sweep.append(dict(erode=e, conf=c, min_area=a, PQ=pq, **st))
 sweep = pd.DataFrame(sweep).sort_values("PQ", ascending=False)
 print(sweep.head(10).to_string(index=False))
 sweep.to_csv(WORK / "threshold_sweep.csv", index=False)
-BEST_CONF, BEST_MIN_AREA = float(sweep.iloc[0].conf), int(sweep.iloc[0].min_area)
-print(f"hold-out PQ={sweep.iloc[0].PQ:.4f} @ conf={BEST_CONF} min_area={BEST_MIN_AREA}")
+BEST_ERODE, BEST_CONF, BEST_MIN_AREA = int(sweep.iloc[0].erode), float(sweep.iloc[0].conf), int(sweep.iloc[0].min_area)
+val_inst = {s: postprocess(*v, BEST_ERODE) for s, v in val_raw.items()}
+print(f"hold-out PQ={sweep.iloc[0].PQ:.4f} @ erode={BEST_ERODE} conf={BEST_CONF} min_area={BEST_MIN_AREA}")
 
 # %% [markdown]
 # ## Visual check
@@ -320,7 +406,7 @@ else:
     final_weights = best_fold
 print("final weights:", final_weights)
 
-test_inst = predict_instances(YOLO(final_weights), test_files)
+test_inst = {s: postprocess(*v, BEST_ERODE) for s, v in predict_raw(YOLO(final_weights), test_files).items()}
 
 rows = []
 for stem in sorted(test_inst):
