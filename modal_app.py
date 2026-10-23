@@ -8,6 +8,9 @@ Run (detached, survives closing the terminal):
     MODAL_PROFILE=third modal run --detach modal_app.py --run-name v1 [--gpu L4|L40S] [--epochs 40] [--full-fit] [--fold-weights /runs/v1/runs/fold0/weights/best.pt]
         [--tiled --init-weights /runs/v1/runs/fold0/weights/best.pt] [--debug]
 
+Semantic U-Net pipeline (account 1 = MODAL_PROFILE=fr0styflame1004):
+    modal run --detach modal_app.py::unet --run-name u1 [--steps 6000] [--full-fit] [--fold-weights /runs/u1/fold0.pt]
+
 Fetch outputs and score:
     MODAL_PROFILE=third modal volume get solar-filament-runs /v1/submission.csv outputs/v1/
     kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.csv -m "v1"
@@ -27,8 +30,11 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1", "libglib2.0-0")
     .pip_install("numpy==1.26.4", "torch==2.5.1", "torchvision==0.20.1", "ultralytics==8.3.40", "pycocotools==2.0.8",
-                 "pandas==2.2.3", "matplotlib==3.9.2", "pyyaml==6.0.2", "tqdm==4.67.1")
+                 "pandas==2.2.3", "matplotlib==3.9.2", "pyyaml==6.0.2", "tqdm==4.67.1",
+                 "segmentation-models-pytorch==0.5.0", "scipy==1.14.1")
     .add_local_file(Path(__file__).parent / "src" / "notebook.py", "/root/notebook.py")
+    .add_local_file(Path(__file__).parent / "src" / "unet_pipeline.py", "/root/unet_pipeline.py")
+    .add_local_dir(Path(__file__).parent / "filament", "/root/filament")
 )
 
 
@@ -65,6 +71,23 @@ def train_l40s(run_name: str, debug: bool, epochs: int, full_fit: bool, fold_wei
 @app.function(gpu="L4", **common)
 def train_l4(run_name: str, debug: bool, epochs: int, full_fit: bool, fold_weights: str, tiled: bool, init_weights: str):
     _run(run_name, debug, epochs, full_fit, fold_weights, tiled, init_weights)
+
+
+@app.function(gpu="L4", **common)
+def unet_l4(run_name: str, env: dict):
+    """Semantic U-Net pipeline (src/unet_pipeline.py); ``env`` overrides its STEPS/BATCH/FULL_FIT/... settings."""
+    os.environ.update(DATA_DIR="/data", WORK_DIR=f"/runs/{run_name}", **{k: str(v) for k, v in env.items()})
+    _commit_every(600)
+    runpy.run_path("/root/unet_pipeline.py", run_name="__main__")
+    runs_vol.commit()
+
+
+@app.local_entrypoint()
+def unet(run_name: str = "u1", steps: int = 6000, batch: int = 8, full_fit: bool = False, fold_weights: str = "",
+         debug: bool = False):
+    unet_l4.remote(run_name, dict(STEPS=steps, BATCH=batch, FULL_FIT=int(full_fit), FOLD_WEIGHTS=fold_weights,
+                                  DEBUG=int(debug)))
+    print(f"done → modal volume get solar-filament-runs /{run_name}/ outputs/{run_name}/")
 
 
 @app.local_entrypoint()
