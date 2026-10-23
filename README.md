@@ -23,7 +23,7 @@ GPU work runs on Modal (profile `third`); Kaggle is used only to download data a
 ```bash
 kaggle competitions download filament-segmentation-2026 -p data   # then unzip into data/
 MODAL_PROFILE=third modal volume put solar-filament-data data/MAGFiLO_1.0_Kaggle_2026 /MAGFiLO_1.0_Kaggle_2026
-MODAL_PROFILE=third modal run --detach modal_app.py --run-name v1 --gpu L40S
+MODAL_PROFILE=third modal run --detach modal_app.py --run-name v1 --gpu L4 --epochs 40
 MODAL_PROFILE=third modal volume get solar-filament-runs /v1/submission.csv outputs/v1/
 kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.csv -m "v1"
 ```

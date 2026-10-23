@@ -5,7 +5,7 @@ One-time data upload (from a local `kaggle competitions download` into ./data):
     MODAL_PROFILE=third modal volume put solar-filament-data data/MAGFiLO_1.0_Kaggle_2026 /MAGFiLO_1.0_Kaggle_2026
 
 Run (detached, survives closing the terminal):
-    MODAL_PROFILE=third modal run --detach modal_app.py --run-name v1 [--gpu L4] [--debug]
+    MODAL_PROFILE=third modal run --detach modal_app.py --run-name v1 [--gpu L4|L40S] [--epochs 40] [--full-fit] [--debug]
 
 Fetch outputs and score:
     MODAL_PROFILE=third modal volume get solar-filament-runs /v1/submission.csv outputs/v1/
@@ -43,28 +43,30 @@ def _commit_every(seconds):
     threading.Thread(target=loop, daemon=True).start()
 
 
-def _run(run_name, debug):
-    os.environ.update(DATA_DIR="/data", WORK_DIR=f"/runs/{run_name}", DEBUG="1" if debug else "0", MPLBACKEND="Agg")
+def _run(run_name, debug, epochs, full_fit):
+    os.environ.update(DATA_DIR="/data", WORK_DIR=f"/runs/{run_name}", DEBUG="1" if debug else "0", MPLBACKEND="Agg",
+                      EPOCHS=str(epochs), FULL_FIT="1" if full_fit else "0")
     _commit_every(600)
     runpy.run_path("/root/notebook.py", init_globals={"display": print}, run_name="__main__")
     runs_vol.commit()
 
 
-common = dict(image=image, volumes={"/data": data_vol, "/runs": runs_vol}, timeout=8 * 3600, cpu=8, memory=32768)
+# Budget-sized: the account has ~$5, so cap wall time hard (L4 ≈ $1.1/h all-in).
+common = dict(image=image, volumes={"/data": data_vol, "/runs": runs_vol}, timeout=2 * 3600, cpu=4, memory=16384)
 
 
 @app.function(gpu="L40S", **common)
-def train_l40s(run_name: str, debug: bool = False):
-    _run(run_name, debug)
+def train_l40s(run_name: str, debug: bool, epochs: int, full_fit: bool):
+    _run(run_name, debug, epochs, full_fit)
 
 
 @app.function(gpu="L4", **common)
-def train_l4(run_name: str, debug: bool = False):
-    _run(run_name, debug)
+def train_l4(run_name: str, debug: bool, epochs: int, full_fit: bool):
+    _run(run_name, debug, epochs, full_fit)
 
 
 @app.local_entrypoint()
-def main(run_name: str = "v1", gpu: str = "L40S", debug: bool = False):
+def main(run_name: str = "v1", gpu: str = "L4", debug: bool = False, epochs: int = 40, full_fit: bool = False):
     fn = {"L40S": train_l40s, "L4": train_l4}[gpu.upper()]
-    fn.remote(run_name, debug)
+    fn.remote(run_name, debug, epochs, full_fit)
     print(f"done → modal volume get solar-filament-runs /{run_name}/submission.csv outputs/{run_name}/")
