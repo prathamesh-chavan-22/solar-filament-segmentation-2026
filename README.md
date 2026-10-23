@@ -29,5 +29,5 @@ kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.c
 ```
 
 ## Notes
-- Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is ~0.69.
+- Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is 0.69 under PQ (pre-Aug-7 scores like "0.70" were Dice and are not comparable).
 - A known leaderboard exploit (partial / empty submissions) exists; this pipeline always predicts on all 180 test images.
