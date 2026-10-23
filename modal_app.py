@@ -34,6 +34,8 @@ image = (
                  "segmentation-models-pytorch==0.5.0", "scipy==1.14.1")
     .add_local_file(Path(__file__).parent / "src" / "notebook.py", "/root/notebook.py")
     .add_local_file(Path(__file__).parent / "src" / "unet_pipeline.py", "/root/unet_pipeline.py")
+    .add_local_file(Path(__file__).parent / "src" / "unet_cv.py", "/root/unet_cv.py")
+    .add_local_file(Path(__file__).parent / "src" / "unet_submit.py", "/root/unet_submit.py")
     .add_local_dir(Path(__file__).parent / "filament", "/root/filament")
 )
 
@@ -80,6 +82,37 @@ def unet_l4(run_name: str, env: dict):
     _commit_every(600)
     runpy.run_path("/root/unet_pipeline.py", run_name="__main__")
     runs_vol.commit()
+
+
+def _run_script(script, run_name, env):
+    os.environ.update(DATA_DIR="/data", WORK_DIR=f"/runs/{run_name}", **{k: str(v) for k, v in env.items()})
+    _commit_every(300)
+    runpy.run_path(f"/root/{script}", run_name="__main__")
+    runs_vol.commit()
+
+
+@app.function(gpu="L4", **common)
+def unet_cv_l4(run_name: str, env: dict):
+    _run_script("unet_cv.py", run_name, env)
+
+
+@app.function(image=image, volumes={"/data": data_vol, "/runs": runs_vol}, timeout=3600, cpu=8, memory=16384)
+def unet_submit_cpu(run_name: str, env: dict):
+    _run_script("unet_submit.py", run_name, env)
+
+
+@app.local_entrypoint()
+def cv(run_name: str = "cv1", steps: int = 5000, folds: str = "0,1,2,3,4", debug: bool = False):
+    """5-fold GPU part (src/unet_cv.py); existing /runs/<run>/fold{k}.pt are reused."""
+    call = unet_cv_l4.spawn(run_name, dict(STEPS=steps, FOLDS=folds, DEBUG=int(debug)))
+    print(f"spawned {call.object_id} → modal volume ls solar-filament-runs /{run_name}")
+
+
+@app.local_entrypoint()
+def submit(run_name: str = "cv1"):
+    """CPU part (src/unet_submit.py): OOF rule sweep + submission.csv from test_prob.pkl."""
+    call = unet_submit_cpu.spawn(run_name, {})
+    print(f"spawned {call.object_id} → modal volume get solar-filament-runs /{run_name}/submission.csv outputs/{run_name}/")
 
 
 @app.local_entrypoint()

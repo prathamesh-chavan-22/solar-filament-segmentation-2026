@@ -1,5 +1,6 @@
 """Grid search of the probability → instance rules against hold-out PQ."""
 import itertools
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -12,19 +13,25 @@ T_LO_GRID, CLOSE_GRID = [0.25, 0.3, 0.4], [3, 8, 12]
 T_HI_GRID, MEAN_GRID, AREA_GRID = [0.5, 0.7], [0.55, 0.6, 0.65, 0.7], [300, 500, 800]
 
 
+def _candidates(args):
+    prob, t_lo, close, min_area, min_peak = args
+    labels, ids, stats, boxes = components(upsample(np.asarray(prob, np.float32)), t_lo, close, min_area, min_peak)
+    return stats, encode_components(labels, ids, boxes)
+
+
 def sweep(prob_by_stem, record_ids, gt_rles, t_lo_grid=T_LO_GRID, close_grid=CLOSE_GRID, t_hi_grid=T_HI_GRID,
-          mean_grid=MEAN_GRID, area_grid=AREA_GRID, log=print):
+          mean_grid=MEAN_GRID, area_grid=AREA_GRID, workers=1, log=print):
     """→ DataFrame of every rule combination with PQ/TP/FP/FN/SQ/RQ, best first.
 
-    Components are extracted and encoded once per (t_lo, close_px); the keep rules are cheap filters on top.
+    Components are extracted and encoded once per (t_lo, close_px) (in ``workers`` processes); the keep rules are
+    cheap filters on top.
     """
+    pool = ProcessPoolExecutor(workers) if workers > 1 else None
     rows = []
     for t_lo, close in itertools.product(t_lo_grid, close_grid):
-        cand = {}
-        for stem, prob in prob_by_stem.items():
-            labels, ids, stats, boxes = components(upsample(np.asarray(prob, np.float32)), t_lo, close,
-                                                   min(area_grid), min(t_hi_grid))
-            cand[stem] = (stats, encode_components(labels, ids, boxes))
+        jobs = [(p, t_lo, close, min(area_grid), min(t_hi_grid)) for p in prob_by_stem.values()]
+        found = pool.map(_candidates, jobs, chunksize=8) if pool else map(_candidates, jobs)
+        cand = dict(zip(prob_by_stem, found))
         for t_hi, mn, area in itertools.product(t_hi_grid, mean_grid, area_grid):
             p = InstanceParams(t_lo, t_hi, close, area, mn)
             preds = {s: [r for r, k in zip(rles, keep_mask(st, p)) if k] for s, (st, rles) in cand.items()}
@@ -32,6 +39,8 @@ def sweep(prob_by_stem, record_ids, gt_rles, t_lo_grid=T_LO_GRID, close_grid=CLO
             rows.append(dict(t_lo=t_lo, close_px=close, t_hi=t_hi, min_mean=mn, min_area=area, PQ=pq, **st))
         if log:
             log(f"t_lo={t_lo} close={close}: best PQ so far {max(r['PQ'] for r in rows):.4f}")
+    if pool:
+        pool.shutdown()
     return pd.DataFrame(rows).sort_values("PQ", ascending=False).reset_index(drop=True)
 
 
