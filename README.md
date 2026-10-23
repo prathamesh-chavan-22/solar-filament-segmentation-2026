@@ -20,7 +20,7 @@ Starter pipeline for the Kaggle competition [filament-segmentation-2026](https:/
 ## Run on Kaggle
 ```bash
 python tools/py2nb.py src/notebook.py kaggle/solar-filament-yolo-seg.ipynb
-kaggle kernels push -p kaggle --accelerator NvidiaL4   # private, GPU + internet
+kaggle kernels push -p kaggle --accelerator NvidiaL40S   # or NvidiaL4X1; private, GPU + internet
 kaggle kernels output xerneas/solar-filament-yolo11-seg-pq -p out
 kaggle competitions submit filament-segmentation-2026 -f out/submission.csv -m "yolo11-seg"
 ```
