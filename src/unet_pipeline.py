@@ -4,7 +4,6 @@ images and write submission.csv.
 Env: DATA_DIR, WORK_DIR, SIZE (1024), CROP (512), STEPS (6000), BATCH (8), LR (3e-4), ENCODER (resnet34),
      VAL_FOLD (0), FULL_FIT (1), FOLD_WEIGHTS (skip fold training), DEBUG (0), TTA (8).
 """
-import itertools
 import os
 import pickle
 import sys
@@ -20,9 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, "/root")
 from filament import H, W  # noqa: E402
 from filament.data import FilamentData, load_gray  # noqa: E402
-from filament.instances import InstanceParams, components, encode_components, keep_mask, prob_to_rles, upsample  # noqa: E402
-from filament.metric import pq_score  # noqa: E402
-from filament import unet  # noqa: E402
+from filament.instances import prob_to_rles  # noqa: E402
+from filament import tune, unet  # noqa: E402
 
 env = os.environ.get
 DEBUG = env("DEBUG", "0") == "1"
@@ -35,11 +33,6 @@ WORK.mkdir(parents=True, exist_ok=True)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if DEBUG:
     STEPS, TTA = 40, 2
-
-# Sweep grid. Components are computed once per (t_lo, close_px); keep rules are cheap filters on top.
-T_LO_GRID, CLOSE_GRID = [0.3, 0.4, 0.5], [0, 3]
-T_HI_GRID, MEAN_GRID, AREA_GRID = [0.5, 0.7, 0.85, 0.95], [0.0, 0.5, 0.6, 0.7], [50, 200, 500, 1000]
-MIN_CAND_AREA = min(AREA_GRID)
 
 t0 = time.time()
 data = FilamentData(env("DATA_DIR", "data"))
@@ -79,31 +72,22 @@ def load(path):
 # ---- fold model + hold-out probabilities ----------------------------------------------------------------------------
 model = load(FOLD_WEIGHTS) if FOLD_WEIGHTS else fit(np.flatnonzero(~is_val), f"fold{VAL_FOLD}")[0]
 val = phys[is_val]
-val_prob = {s: unet.predict_prob(model, images[i].astype(np.float32), DEVICE, TTA).astype(np.float16)
-            for s, i in zip(val.stem, np.flatnonzero(is_val))}
-pickle.dump(val_prob, open(WORK / "val_prob.pkl", "wb"))
+prob_path = WORK / "val_prob.pkl"
+if FOLD_WEIGHTS and prob_path.exists():  # resuming a run whose fold model already predicted the hold-out
+    val_prob = pickle.load(open(prob_path, "rb"))
+else:
+    val_prob = {s: unet.predict_prob(model, images[i].astype(np.float32), DEVICE, TTA).astype(np.float16)
+                for s, i in zip(val.stem, np.flatnonzero(is_val))}
+    pickle.dump(val_prob, open(prob_path, "wb"))
 print(f"hold-out probabilities {time.time() - t0:.0f}s", flush=True)
 
 # ---- instance-rule sweep on the hold-out -----------------------------------------------------------------------------
 val_records = [r for rs in val.record_ids for r in rs]
-rows = []
-for t_lo, close in itertools.product(T_LO_GRID, CLOSE_GRID):
-    cand = {}  # stem → (stats, rles) for every component
-    for stem, prob in val_prob.items():
-        labels, ids, stats, boxes = components(upsample(prob.astype(np.float32)), t_lo, close,
-                                               MIN_CAND_AREA, min(T_HI_GRID))
-        cand[stem] = (stats, encode_components(labels, ids, boxes))
-    for t_hi, mn, area in itertools.product(T_HI_GRID, MEAN_GRID, AREA_GRID):
-        p = InstanceParams(t_lo, t_hi, close, area, mn)
-        preds = {s: [r for r, k in zip(rles, keep_mask(st, p)) if k] for s, (st, rles) in cand.items()}
-        pq, st = pq_score(preds, val_records, data.record_rles)
-        rows.append(dict(t_lo=t_lo, close_px=close, t_hi=t_hi, min_mean=mn, min_area=area, PQ=pq, **st))
-sweep = pd.DataFrame(rows).sort_values("PQ", ascending=False)
-sweep.to_csv(WORK / "sweep.csv", index=False)
-print(sweep.head(10).to_string(index=False), flush=True)
-best = sweep.iloc[0]
-BEST = InstanceParams(float(best.t_lo), float(best.t_hi), int(best.close_px), int(best.min_area), float(best.min_mean))
-print(f"best {BEST} → hold-out PQ {best.PQ:.4f}  ({time.time() - t0:.0f}s)", flush=True)
+table = tune.sweep(val_prob, val_records, data.record_rles, log=lambda m: print(m, flush=True))
+table.to_csv(WORK / "sweep.csv", index=False)
+print(table.head(10).to_string(index=False), flush=True)
+BEST = tune.best_params(table)
+print(f"best {BEST} → hold-out PQ {table.PQ[0]:.4f}  ({time.time() - t0:.0f}s)", flush=True)
 
 # ---- final model + submission ----------------------------------------------------------------------------------------
 if FULL_FIT:

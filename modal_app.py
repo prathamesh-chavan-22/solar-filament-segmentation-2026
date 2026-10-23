@@ -85,9 +85,10 @@ def unet_l4(run_name: str, env: dict):
 @app.local_entrypoint()
 def unet(run_name: str = "u1", steps: int = 6000, batch: int = 8, full_fit: bool = False, fold_weights: str = "",
          debug: bool = False):
-    unet_l4.remote(run_name, dict(STEPS=steps, BATCH=batch, FULL_FIT=int(full_fit), FOLD_WEIGHTS=fold_weights,
-                                  DEBUG=int(debug)))
-    print(f"done → modal volume get solar-filament-runs /{run_name}/ outputs/{run_name}/")
+    # spawn + clean exit: with --detach the job then outlives this client (killing a blocking .remote() cancels it).
+    call = unet_l4.spawn(run_name, dict(STEPS=steps, BATCH=batch, FULL_FIT=int(full_fit), FOLD_WEIGHTS=fold_weights,
+                                        DEBUG=int(debug)))
+    print(f"spawned {call.object_id} → modal volume ls solar-filament-runs /{run_name}")
 
 
 @app.local_entrypoint()
