@@ -15,14 +15,17 @@ Starter pipeline for the Kaggle competition [filament-segmentation-2026](https:/
 |---|---|
 | `src/notebook.py` | Source of truth (percent-format cells) |
 | `tools/py2nb.py` | Builds the `.ipynb` from the source |
-| `kaggle/` | Kaggle kernel bundle (`kernel-metadata.json` + notebook) |
+| `modal_app.py` | Modal training/inference app (GPU L40S or L4) |
+| `notebooks/` | Built notebook (for reading/local runs) |
 
-## Run on Kaggle
+## Run (train on Modal, score on Kaggle)
+GPU work runs on Modal (profile `third`); Kaggle is used only to download data and submit.
 ```bash
-python tools/py2nb.py src/notebook.py kaggle/solar-filament-yolo-seg.ipynb
-kaggle kernels push -p kaggle --accelerator NvidiaL40S   # or NvidiaL4X1; private, GPU + internet
-kaggle kernels output xerneas/solar-filament-yolo11-seg-pq -p out
-kaggle competitions submit filament-segmentation-2026 -f out/submission.csv -m "yolo11-seg"
+kaggle competitions download filament-segmentation-2026 -p data   # then unzip into data/
+MODAL_PROFILE=third modal volume put solar-filament-data data/MAGFiLO_1.0_Kaggle_2026 /MAGFiLO_1.0_Kaggle_2026
+MODAL_PROFILE=third modal run --detach modal_app.py --run-name v1 --gpu L40S
+MODAL_PROFILE=third modal volume get solar-filament-runs /v1/submission.csv outputs/v1/
+kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.csv -m "v1"
 ```
 
 ## Notes

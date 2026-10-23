@@ -16,11 +16,12 @@
 # **Run settings:** GPU (L4 / L40S / T4), Internet **on** (pip + pretrained weights). Not a code competition — submit the CSV.
 
 # %%
-import subprocess, sys
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "ultralytics>=8.3.0", "pycocotools"], check=False)
+import importlib.util, subprocess, sys
+if not all(importlib.util.find_spec(m) for m in ("ultralytics", "pycocotools")):
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "ultralytics>=8.3.0", "pycocotools"], check=False)
 
 # %%
-import json, random, shutil, time
+import json, os, random, shutil, time
 from collections import defaultdict
 from pathlib import Path
 
@@ -38,7 +39,7 @@ from ultralytics.data.converter import merge_multi_segment
 # ## Config
 
 # %%
-DEBUG = False                    # True → tiny smoke run (few images, 2 epochs)
+DEBUG = os.environ.get("DEBUG", "0") == "1"   # True → tiny smoke run (few images, 2 epochs)
 SEED = 42
 FOLDS, VAL_FOLD = 5, 0           # date-grouped hold-out used for threshold tuning
 FULL_FIT = True                  # retrain on all images with the tuned thresholds for the submission
@@ -54,7 +55,8 @@ CONF_GRID = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60]
 MIN_AREA_GRID = [0, 100, 300, 600, 1000]   # pixels at 2048²
 PRED_CONF = 0.05                 # low floor; the tuned threshold is applied afterwards
 
-WORK = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path("work")
+WORK = Path(os.environ.get("WORK_DIR", "/kaggle/working" if Path("/kaggle/working").exists() else "work"))
+WORK.mkdir(parents=True, exist_ok=True)
 YOLO_DIR = WORK / "yolo"
 H = W = 2048
 
@@ -66,7 +68,7 @@ print(f"GPU={torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cp
 # ## Locate data
 
 # %%
-INPUT = Path("/kaggle/input") if Path("/kaggle/input").exists() else Path("data")
+INPUT = Path(os.environ.get("DATA_DIR", "/kaggle/input" if Path("/kaggle/input").exists() else "data"))
 ANN_PATH = next(INPUT.rglob("MAGFiLO_1.0_Annotations_kaggle2026_train.json"))
 TRAIN_IMG_DIR = next(p for p in INPUT.rglob("train_images") if p.is_dir())
 TEST_IMG_DIR = next(p for p in INPUT.rglob("test_images") if p.is_dir())
@@ -278,7 +280,8 @@ for c in CONF_GRID:
         pq, st = pq_score({s: select(v, c, a) for s, v in val_inst.items()}, val_records)
         sweep.append(dict(conf=c, min_area=a, PQ=pq, **st))
 sweep = pd.DataFrame(sweep).sort_values("PQ", ascending=False)
-display(sweep.head(10))
+print(sweep.head(10).to_string(index=False))
+sweep.to_csv(WORK / "threshold_sweep.csv", index=False)
 BEST_CONF, BEST_MIN_AREA = float(sweep.iloc[0].conf), int(sweep.iloc[0].min_area)
 print(f"hold-out PQ={sweep.iloc[0].PQ:.4f} @ conf={BEST_CONF} min_area={BEST_MIN_AREA}")
 
@@ -298,7 +301,7 @@ for ax, row in zip(axes, val_df.sample(3, random_state=SEED).itertuples()):
         m = mask_utils.decode(rle).astype(bool)
         over[m] = (over[m] * 0.4 + np.array([255, 0, 0]) * 0.6).astype(np.uint8)
     ax.imshow(over); ax.set_title(f"{row.stem}  green=GT  red=pred"); ax.axis("off")
-plt.tight_layout(); plt.show()
+plt.tight_layout(); plt.savefig(WORK / "val_overlay.png", dpi=80); plt.show()
 
 # %% [markdown]
 # ## Final model → test predictions
