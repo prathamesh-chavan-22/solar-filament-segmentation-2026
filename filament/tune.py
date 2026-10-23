@@ -7,8 +7,9 @@ import pandas as pd
 from .instances import InstanceParams, components, encode_components, keep_mask, upsample
 from .metric import pq_score
 
-T_LO_GRID, CLOSE_GRID = [0.3, 0.4, 0.5], [0, 3]
-T_HI_GRID, MEAN_GRID, AREA_GRID = [0.5, 0.7, 0.85, 0.95], [0.0, 0.5, 0.6, 0.7], [50, 200, 500, 1000]
+# Centred on the u1 optimum (t_lo 0.3, close 8, mean 0.65, area 500 → hold-out PQ 0.407); peak ≥ t_hi rarely binds.
+T_LO_GRID, CLOSE_GRID = [0.25, 0.3, 0.4], [3, 8, 12]
+T_HI_GRID, MEAN_GRID, AREA_GRID = [0.5, 0.7], [0.55, 0.6, 0.65, 0.7], [300, 500, 800]
 
 
 def sweep(prob_by_stem, record_ids, gt_rles, t_lo_grid=T_LO_GRID, close_grid=CLOSE_GRID, t_hi_grid=T_HI_GRID,
