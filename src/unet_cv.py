@@ -4,13 +4,15 @@ average all fold models over the test set.  Rule tuning + submission happen on C
 Outputs in WORK_DIR: fold{k}.pt, oof_fold{k}.pkl ({stem: (S, S) float16}), test_prob.pkl ({stem: (S, S) float16}).
 Env: DATA_DIR, WORK_DIR, SIZE (1024), CROP (512), STEPS (5000), BATCH (8), LR (3e-4), ENCODER (resnet34),
      FOLDS ("0,1,2,3,4"), TTA (8), DEBUG (0), CHANNELS_LAST (0), COMPILE (0), AMP (fp16|bf16), PRED_CHUNK (8),
-     CACHE_DIR (WORK_DIR; input cache, keep off saved outputs), INIT_DIR (copy existing fold{k}.pt / oof_fold{k}.pkl).
+     CACHE_DIR (WORK_DIR; input cache, keep off saved outputs), INIT_DIR (copy existing fold{k}.pt / oof_fold{k}.pkl),
+     SKIP_TEST (0). With several GPUs, untrained folds are split over one child process per GPU.
 Local RTX 3050 Ti (4 GB), EfficientNet-B4: BATCH=4 STEPS=10000 CHANNELS_LAST=1 COMPILE=1 PRED_CHUNK=2
 (compiled NHWC: 23 crops/s, 2.2 GB vs 19 crops/s, 3.1 GB eager).
 """
 import os
 import pickle
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -55,15 +57,28 @@ else:
     images = [unet.preprocess(load_gray(data.train_path(f)), SIZE).astype(np.float16) for f in phys.file_name]
     targets = [data.soft_target(r, SIZE).astype(np.float16) for r in phys.record_ids]
     np.savez(cache, images=np.stack(images), targets=np.stack(targets))
-log(f"{len(phys)} images ready, device {DEVICE}")
+log(f"{len(phys)} images ready, device {DEVICE} × {torch.cuda.device_count()}")
+
+for k in FOLDS:  # reuse folds trained elsewhere
+    for src in Path(env("INIT_DIR", "/nonexistent")).glob(f"**/fold{k}.pt"):
+        shutil.copy(src, WORK / src.name)
+    for src in Path(env("INIT_DIR", "/nonexistent")).glob(f"**/oof_fold{k}.pkl"):
+        shutil.copy(src, WORK / src.name)
+
+# Several GPUs (Kaggle 2×T4): train the missing folds in one child process per GPU, then load them all below.
+pending = [k for k in FOLDS if not (WORK / f"fold{k}.pt").exists()]
+n_gpu = torch.cuda.device_count()
+if n_gpu > 1 and len(pending) > 1 and env("GPU_WORKER") is None:
+    children = [subprocess.Popen([sys.executable, "-u", __file__], env={
+        **os.environ, "GPU_WORKER": str(g), "CUDA_VISIBLE_DEVICES": str(g), "SKIP_TEST": "1",
+        "FOLDS": ",".join(map(str, pending[g::n_gpu]))}) for g in range(min(n_gpu, len(pending)))]
+    if any(c.wait() for c in children):
+        sys.exit("a GPU worker failed")
+    log(f"folds {pending} trained on {len(children)} GPUs")
 
 models = []
 for k in FOLDS:
     weights = WORK / f"fold{k}.pt"
-    for src in Path(env("INIT_DIR", "/nonexistent")).glob(f"**/fold{k}.pt"):  # reuse a fold trained elsewhere
-        shutil.copy(src, weights)
-    for src in Path(env("INIT_DIR", "/nonexistent")).glob(f"**/oof_fold{k}.pkl"):
-        shutil.copy(src, WORK / src.name)
     model = unet.build_model(ENCODER, pretrained=not weights.exists())
     if weights.exists():
         model.load_state_dict(torch.load(weights, map_location="cpu"))
@@ -84,6 +99,8 @@ for k in FOLDS:
         log(f"fold {k}: hold-out probabilities for {len(val)} images")
     models.append(model)
 
+if env("SKIP_TEST") == "1":
+    sys.exit(0)
 test_files = data.test_files[:3] if DEBUG else data.test_files
 test_prob = {}
 for f in test_files:
