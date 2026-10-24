@@ -3,12 +3,14 @@ average all fold models over the test set.  Rule tuning + submission happen on C
 
 Outputs in WORK_DIR: fold{k}.pt, oof_fold{k}.pkl ({stem: (S, S) float16}), test_prob.pkl ({stem: (S, S) float16}).
 Env: DATA_DIR, WORK_DIR, SIZE (1024), CROP (512), STEPS (5000), BATCH (8), LR (3e-4), ENCODER (resnet34),
-     FOLDS ("0,1,2,3,4"), TTA (8), DEBUG (0), CHANNELS_LAST (0), COMPILE (0), AMP (fp16|bf16), PRED_CHUNK (8).
+     FOLDS ("0,1,2,3,4"), TTA (8), DEBUG (0), CHANNELS_LAST (0), COMPILE (0), AMP (fp16|bf16), PRED_CHUNK (8),
+     CACHE_DIR (WORK_DIR; input cache, keep off saved outputs), INIT_DIR (copy existing fold{k}.pt / oof_fold{k}.pkl).
 Local RTX 3050 Ti (4 GB), EfficientNet-B4: BATCH=4 STEPS=10000 CHANNELS_LAST=1 COMPILE=1 PRED_CHUNK=2
 (compiled NHWC: 23 crops/s, 2.2 GB vs 19 crops/s, 3.1 GB eager).
 """
 import os
 import pickle
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -45,7 +47,7 @@ phys = data.physical
 if DEBUG:
     phys = phys.groupby("fold").head(3).reset_index(drop=True)
 
-cache = WORK / f"cache_{SIZE}{'_debug' if DEBUG else ''}.npz"
+cache = Path(env("CACHE_DIR", WORK)) / f"cache_{SIZE}{'_debug' if DEBUG else ''}.npz"
 if cache.exists():
     z = np.load(cache)
     images, targets = list(z["images"]), list(z["targets"])
@@ -58,6 +60,10 @@ log(f"{len(phys)} images ready, device {DEVICE}")
 models = []
 for k in FOLDS:
     weights = WORK / f"fold{k}.pt"
+    for src in Path(env("INIT_DIR", "/nonexistent")).glob(f"**/fold{k}.pt"):  # reuse a fold trained elsewhere
+        shutil.copy(src, weights)
+    for src in Path(env("INIT_DIR", "/nonexistent")).glob(f"**/oof_fold{k}.pkl"):
+        shutil.copy(src, WORK / src.name)
     model = unet.build_model(ENCODER, pretrained=not weights.exists())
     if weights.exists():
         model.load_state_dict(torch.load(weights, map_location="cpu"))
