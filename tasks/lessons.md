@@ -13,3 +13,7 @@
 ## 2026-10-24 — Git Bash mangles /kaggle paths
 - `python tools/kaggle_run.py push ... --env PROB_DIR=/kaggle/input` from Git Bash sent `C:/Program Files/Git/kaggle/input` (MSYS path conversion); the kernel ran on zero inputs.
 - Rule: launch Kaggle pushes from PowerShell, or `export MSYS_NO_PATHCONV=1` in bash. kaggle_run.py now refuses mangled env values.
+
+## 2026-10-24 — No automatic push-retry loops on Kaggle
+- A 5-minute loop retrying GPU kernel pushes against a full session quota kept failing ("Maximum batch GPU session count of 2 reached") and the user saw it as constant cancelling. They asked to stop it.
+- Rule: push a Kaggle kernel once. If it is refused for quota, tell the user and wait for them to free a slot. Never retry in the background.
