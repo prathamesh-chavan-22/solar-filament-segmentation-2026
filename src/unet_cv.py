@@ -2,7 +2,7 @@
 average all fold models over the test set.  Rule tuning + submission happen on CPU in src/unet_submit.py.
 
 Outputs in WORK_DIR: fold{k}.pt, oof_fold{k}.pkl ({stem: (S, S) float16}), test_prob.pkl ({stem: (S, S) float16}).
-Env: DATA_DIR, WORK_DIR, SIZE (1024), CROP (512), STEPS (5000), BATCH (8), LR (3e-4), ENCODER (resnet34),
+Env: DATA_DIR, WORK_DIR, SIZE (1024; 2048 = native), CROP (512), STEPS (5000), BATCH (8), LR (3e-4), ENCODER (resnet34),
      FOLDS ("0,1,2,3,4"), TTA (8), DEBUG (0), CHANNELS_LAST (0), COMPILE (0), AMP (fp16|bf16), PRED_CHUNK (8),
      CACHE_DIR (WORK_DIR; input cache, keep off saved outputs), INIT_DIR (copy existing fold{k}.pt / oof_fold{k}.pkl),
      SKIP_TEST (0). With several GPUs, untrained folds are split over one child process per GPU.
@@ -49,14 +49,21 @@ phys = data.physical
 if DEBUG:
     phys = phys.groupby("fold").head(3).reset_index(drop=True)
 
-cache = Path(env("CACHE_DIR", WORK)) / f"cache_{SIZE}{'_debug' if DEBUG else ''}.npz"
-if cache.exists():
-    z = np.load(cache)
-    images, targets = list(z["images"]), list(z["targets"])
-else:
-    images = [unet.preprocess(load_gray(data.train_path(f)), SIZE).astype(np.float16) for f in phys.file_name]
-    targets = [data.soft_target(r, SIZE).astype(np.float16) for r in phys.record_ids]
-    np.savez(cache, images=np.stack(images), targets=np.stack(targets))
+# Memory-mapped .npy files written image by image: at SIZE=2048 the cache is ~12 GB, too big to hold or stack in RAM.
+cache = Path(env("CACHE_DIR", WORK)) / f"cache_{SIZE}{'_debug' if DEBUG else ''}"
+if not (cache / "targets.npy").exists():
+    cache.mkdir(parents=True, exist_ok=True)
+    shape = (len(phys), SIZE, SIZE)
+    images = np.lib.format.open_memmap(cache / "images.npy", "w+", np.float16, shape)
+    for i, f in enumerate(phys.file_name):
+        images[i] = unet.preprocess(load_gray(data.train_path(f)), SIZE)
+    targets = np.lib.format.open_memmap(cache / "targets.tmp.npy", "w+", np.float16, shape)
+    for i, r in enumerate(phys.record_ids):
+        targets[i] = data.soft_target(r, SIZE)
+    images.flush(), targets.flush()
+    del images, targets
+    (cache / "targets.tmp.npy").rename(cache / "targets.npy")  # marks the cache complete
+images, targets = np.load(cache / "images.npy", mmap_mode="r"), np.load(cache / "targets.npy", mmap_mode="r")
 log(f"{len(phys)} images ready, device {DEVICE} × {torch.cuda.device_count()}")
 
 for k in FOLDS:  # reuse folds trained elsewhere
