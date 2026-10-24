@@ -58,6 +58,10 @@ def sync_code():
 
 def push(name, script, gpu, inputs, kernel_inputs, env):
     env = dict(e.split("=", 1) for e in env)
+    # Git Bash rewrites "/kaggle/..." args into "C:/Program Files/Git/kaggle/..."; run with MSYS_NO_PATHCONV=1.
+    mangled = [k for k, v in env.items() if "/Git/" in v.replace("\\", "/")]
+    if mangled:
+        sys.exit(f"MSYS path conversion mangled {mangled}; rerun with MSYS_NO_PATHCONV=1 or from PowerShell")
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         (d / "run.py").write_text(RUNNER.format(pip=PIP, env=json.dumps(env), script=script))

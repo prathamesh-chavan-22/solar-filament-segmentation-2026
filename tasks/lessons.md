@@ -9,3 +9,7 @@
 - Rule from user: nothing heavy runs on the laptop (training, inference, sweeps, benchmarks). It crashed twice under load.
 - Default compute is Kaggle kernels (free CPU + weekly GPU quota); Modal L4 only when paid GPU is truly needed (estimate cost first).
 - Local = edit code, git, launch/monitor remote jobs, download small results.
+
+## 2026-10-24 — Git Bash mangles /kaggle paths
+- `python tools/kaggle_run.py push ... --env PROB_DIR=/kaggle/input` from Git Bash sent `C:/Program Files/Git/kaggle/input` (MSYS path conversion); the kernel ran on zero inputs.
+- Rule: launch Kaggle pushes from PowerShell, or `export MSYS_NO_PATHCONV=1` in bash. kaggle_run.py now refuses mangled env values.
