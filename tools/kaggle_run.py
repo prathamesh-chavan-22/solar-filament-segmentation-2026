@@ -85,7 +85,7 @@ def main():
     p = sub.add_parser("push")
     p.add_argument("name")
     p.add_argument("script")
-    p.add_argument("--gpu", default="L4", choices=[*ACCELERATORS, "none"])
+    p.add_argument("--gpu", default="T4", choices=[*ACCELERATORS, "none"])
     p.add_argument("--input", nargs="*", default=[])
     p.add_argument("--kernel-input", nargs="*", default=[])
     p.add_argument("--env", nargs="*", default=[])
