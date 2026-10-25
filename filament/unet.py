@@ -65,7 +65,7 @@ class GpuCrops:
         self.images = torch.empty((n, size, size), dtype=torch.float16, device=device)
         self.targets = torch.empty((n, size, size), dtype=torch.uint8, device=device)
         for i, (im, t) in enumerate(zip(images, targets)):
-            self.images[i] = torch.from_numpy(np.asarray(im, np.float16))
+            self.images[i] = torch.from_numpy(np.array(im, np.float16))  # copy: memmap rows are read-only
             self.targets[i] = torch.from_numpy(np.rint(np.asarray(t, np.float32) * 255).astype(np.uint8))
         self.crop, self.size = crop, size
         self.rng = np.random.default_rng(seed)
