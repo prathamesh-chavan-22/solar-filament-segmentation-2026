@@ -53,6 +53,32 @@ class CropDataset(Dataset):
         return d4(img, k).contiguous(), d4(tgt, k).contiguous()
 
 
+class GpuCrops:
+    """The whole training set resident on the GPU; random ``crop``² windows + D4 drawn on the device.
+
+    Replaces the DataLoader (no CPU slicing/copies per step). Images stay float16 (exact); soft targets are stored as
+    round(t·255) uint8 (error ≤ 0.002), so 566 native 2048² images take ~7 GB.
+    """
+
+    def __init__(self, images, targets, crop, device, seed=0):
+        n, size = len(images), images[0].shape[0]
+        self.images = torch.empty((n, size, size), dtype=torch.float16, device=device)
+        self.targets = torch.empty((n, size, size), dtype=torch.uint8, device=device)
+        for i, (im, t) in enumerate(zip(images, targets)):
+            self.images[i] = torch.from_numpy(np.asarray(im, np.float16))
+            self.targets[i] = torch.from_numpy(np.rint(np.asarray(t, np.float32) * 255).astype(np.uint8))
+        self.crop, self.size = crop, size
+        self.rng = np.random.default_rng(seed)
+
+    def batch(self, b):
+        c, xs, ys = self.crop, [], []
+        for i, y, x, k in zip(self.rng.integers(len(self.images), size=b), self.rng.integers(0, self.size - c + 1, b),
+                              self.rng.integers(0, self.size - c + 1, b), self.rng.integers(8, size=b)):
+            xs.append(d4(self.images[i, y:y + c, x:x + c], k))
+            ys.append(d4(self.targets[i, y:y + c, x:x + c], k))
+        return torch.stack(xs)[:, None].float(), torch.stack(ys)[:, None].float() / 255
+
+
 def build_model(encoder="resnet34", pretrained=True):
     """smp U-Net for CNN encoders; ``dinov2-{s,b,l,g}`` gives the LoRA-adapted ViT U-Net (filament.vit)."""
     if encoder.startswith("dinov2"):
@@ -82,13 +108,17 @@ def speedups(model, device, channels_last=True, compile_model=False):
 
 
 def train(model, images, targets, *, steps, batch, crop, lr, device, log_every=200, seed=0,
-          channels_last=False, compile_model=False, amp_dtype=torch.float16):
-    ds = CropDataset(images, targets, crop, steps * batch, seed)
-    # Forked workers inherit identical copies of ds.rng; reseed each so they don't sample the same crops.
-    dl = DataLoader(ds, batch_size=batch, num_workers=0 if os.name == "nt" else 4,
-                    worker_init_fn=lambda w: setattr(torch.utils.data.get_worker_info().dataset, "rng",
-                                                     np.random.default_rng(seed + 1 + w)),
-                    persistent_workers=os.name != "nt")
+          channels_last=False, compile_model=False, amp_dtype=torch.float16, gpu_data=False):
+    if gpu_data:
+        crops = GpuCrops(images, targets, crop, device, seed)
+        dl = (crops.batch(batch) for _ in range(steps))
+    else:
+        ds = CropDataset(images, targets, crop, steps * batch, seed)
+        # Forked workers inherit identical copies of ds.rng; reseed each so they don't sample the same crops.
+        dl = DataLoader(ds, batch_size=batch, num_workers=0 if os.name == "nt" else 4,
+                        worker_init_fn=lambda w: setattr(torch.utils.data.get_worker_info().dataset, "rng",
+                                                         np.random.default_rng(seed + 1 + w)),
+                        persistent_workers=os.name != "nt")
     model.to(device).train()
     net = speedups(model, device, channels_last, compile_model) if (channels_last or compile_model) else model
     fmt = torch.channels_last if channels_last else torch.contiguous_format

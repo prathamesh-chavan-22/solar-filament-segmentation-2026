@@ -6,7 +6,7 @@
     python tools/kaggle_run.py status <name>
     python tools/kaggle_run.py fetch <name> [--files REGEX]        # → outputs/kaggle/<name>/
 
-<script> is a path under src/ (e.g. src/unet_cv.py). The kernel gets the competition data at /kaggle/input/...,
+<script> is a path under src/ or experiments/ (e.g. src/unet_cv.py), or several comma-separated, run in order. The kernel gets the competition data at /kaggle/input/...,
 our code at /kaggle/input/solar-filament-code, writes results to /kaggle/working (= kernel output) and keeps
 caches in /tmp. Extra inputs (datasets / other kernels' outputs) appear under /kaggle/input/<slug>.
 """
@@ -33,7 +33,10 @@ print("code:", code, flush=True)
 os.environ.update({{"DATA_DIR": "/kaggle/input", "WORK_DIR": "/kaggle/working", "CACHE_DIR": "/tmp", "MPLBACKEND": "Agg"}})
 os.environ.update(json.loads({env!r}))
 print("env:", {{k: os.environ[k] for k in json.loads({env!r})}}, flush=True)
-sys.exit(subprocess.run([sys.executable, "-u", os.path.join(code, {script!r})], cwd="/tmp").returncode)
+for script in {script!r}.split(","):  # several scripts run one after another, stopping at the first failure
+    rc = subprocess.run([sys.executable, "-u", os.path.join(code, script)], cwd="/tmp").returncode
+    if rc:
+        sys.exit(rc)
 '''
 
 
@@ -46,7 +49,8 @@ def sync_code():
     with tempfile.TemporaryDirectory() as tmp:
         stage = Path(tmp) / "solar-filament-code"
         shutil.copytree(ROOT / "filament", stage / "filament", ignore=shutil.ignore_patterns("__pycache__"))
-        shutil.copytree(ROOT / "src", stage / "src", ignore=shutil.ignore_patterns("__pycache__"))
+        for d in ("src", "experiments"):
+            shutil.copytree(ROOT / d, stage / d, ignore=shutil.ignore_patterns("__pycache__"))
         json.dump({"title": "solar-filament-code", "id": CODE_DATASET, "licenses": [{"name": "CC0-1.0"}]},
                   open(stage / "dataset-metadata.json", "w"))
         exists = subprocess.run(["kaggle", "datasets", "status", CODE_DATASET], capture_output=True, text=True)
