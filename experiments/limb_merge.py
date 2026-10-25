@@ -144,8 +144,13 @@ def merged_instances(comps, rles, edges):
     return pd.DataFrame(rows, columns=["area", "peak", "mean", "dx", "dr"]), out
 
 
+def _init(instances, records):
+    global INSTANCES, RECORDS
+    INSTANCES, RECORDS = instances, records
+
+
 def score(args):
-    """(instances by stem, rule) → PQ row. Runs in a forked worker; INSTANCES / RECORDS are module globals."""
+    """(instances by stem, rule) → PQ row, in a worker set up by ``_init`` (works with spawn, i.e. on Windows)."""
     option, (t_hi, mn, area, limb) = args
     preds = {}
     for stem, (st, rles) in INSTANCES[option].items():
@@ -154,7 +159,7 @@ def score(args):
             keep &= st[limb[0]] <= limb[1]
         preds[stem] = [r for r, k in zip(rles, keep) if k]
     pq, s = pq_score(preds, RECORDS, data.record_rles)
-    return dict(option=option, t_hi=t_hi, min_mean=mn, min_area=area, limb=f"{limb[0]}≤{limb[1]}", PQ=pq, **s)
+    return dict(option=option, t_hi=t_hi, min_mean=mn, min_area=area, limb=f"{limb[0]}<={limb[1]}", PQ=pq, **s)
 
 
 if __name__ == "__main__":
@@ -187,14 +192,15 @@ if __name__ == "__main__":
         clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_leaf_nodes=31, random_state=k)
         clf.fit(allp.loc[tr, FEATURES], allp.loc[tr, "y"])
         allp.loc[te, "p"] = clf.predict_proba(allp.loc[te, FEATURES])[:, 1]
-        log(f"fold {k}: pair AUC {roc_auc_score(allp.loc[te, 'y'], allp.loc[te, 'p']):.3f}")
+        if allp.loc[te, "y"].nunique() == 2:
+            log(f"fold {k}: pair AUC {roc_auc_score(allp.loc[te, 'y'], allp.loc[te, 'p']):.3f}")
     log(f"pairs: {len(allp)}, positives {allp.y.sum()} ({allp.y.mean():.1%}), "
         f"overall AUC {roc_auc_score(allp.y, allp.p):.3f}")
     allp.to_csv(WORK / "pairs.csv", index=False)
 
     options = {"none": lambda p: p.iloc[:0]}
     options |= {f"gbm>{tau}": (lambda p, tau=tau: p[p.p > tau]) for tau in (0.3, 0.5, 0.7, 0.85)}
-    options |= {f"gap≤{g},line≥{lm}": (lambda p, g=g, lm=lm: p[(p.gap <= g) & (p.line_mean >= lm)])
+    options |= {f"gap<={g},line>={lm}": (lambda p, g=g, lm=lm: p[(p.gap <= g) & (p.line_mean >= lm)])
                 for g, lm in ((40, 0.2), (80, 0.2), (80, 0.1))}
     by_stem = dict(tuple(allp.groupby("stem")))
     INSTANCES = {}
@@ -208,12 +214,12 @@ if __name__ == "__main__":
     # Stage 1: limb cut-offs on the unmerged components; stage 2: merge options with and without the best limb rule.
     limbs = [("none", 0)] + [(k, c) for k in ("dx", "dr") for c in (0.97, 0.94, 0.9, 0.85)]
     keep_grid = list(itertools.product((0.7, 0.99), (0.75, 0.8, 0.85, 0.9), (200, 300, 500)))
-    with ProcessPoolExecutor(WORKERS) as pool:
+    with ProcessPoolExecutor(WORKERS, initializer=_init, initargs=(INSTANCES, RECORDS)) as pool:
         stage1 = pd.DataFrame(pool.map(score, [("none", (*k, l)) for k in keep_grid for l in limbs], chunksize=4))
     stage1 = stage1.sort_values("PQ", ascending=False)
     print(stage1.groupby("limb").head(1).to_string(index=False), flush=True)
-    best_limb = next(l for l in limbs if f"{l[0]}≤{l[1]}" == stage1.limb.iloc[0])
-    with ProcessPoolExecutor(WORKERS) as pool:
+    best_limb = next(l for l in limbs if f"{l[0]}<={l[1]}" == stage1.limb.iloc[0])
+    with ProcessPoolExecutor(WORKERS, initializer=_init, initargs=(INSTANCES, RECORDS)) as pool:
         stage2 = pd.DataFrame(pool.map(score, [(o, (*k, l)) for o in options if o != "none" for k in keep_grid
                                                for l in {("none", 0), best_limb}], chunksize=4))
     table = pd.concat([stage1, stage2]).sort_values("PQ", ascending=False)
