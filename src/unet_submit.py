@@ -31,7 +31,8 @@ if __name__ == "__main__":
     for pat in os.environ.get("PROB_DIR", str(WORK)).split(","):
         found = sorted(glob.glob(pat, recursive=True))
         if not found:
-            sys.exit(f"PROB_DIR: nothing matches {pat}")
+            mounted = sorted(str(d) for d in glob.glob("/kaggle/input/**/", recursive=True) if d.count("/") <= 6)
+            sys.exit(f"PROB_DIR: nothing matches {pat}; directories under /kaggle/input: {mounted}")
         PROBS.append(Path(found[0]))
     print(f"models: {[str(d) for d in PROBS]}", flush=True)
     grid = {f"{k}_grid": [cast(v) for v in os.environ[f"GRID_{k.upper()}"].split(",")]
