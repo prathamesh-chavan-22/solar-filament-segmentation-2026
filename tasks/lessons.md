@@ -17,3 +17,7 @@
 ## 2026-10-24 — No automatic push-retry loops on Kaggle
 - A 5-minute loop retrying GPU kernel pushes against a full session quota kept failing ("Maximum batch GPU session count of 2 reached") and the user saw it as constant cancelling. They asked to stop it.
 - Rule: push a Kaggle kernel once. If it is refused for quota, tell the user and wait for them to free a slot. Never retry in the background.
+
+## 2026-10-25 — The laptop crashes under CPU load too
+- A local CPU-only run (limb_merge, 5 workers, about 6 GB of probabilities in RAM) crashed the laptop, as GPU training had twice before.
+- Rule: run nothing heavy locally, CPU included. When Kaggle slots are full, wait for one; the user asked for exactly that.
