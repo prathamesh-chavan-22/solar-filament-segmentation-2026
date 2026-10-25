@@ -2,8 +2,9 @@
 test probabilities into submission.csv.
 
 Env: DATA_DIR, WORK_DIR (outputs), PROB_DIR (WORK_DIR; comma list of glob patterns, one directory per model, each
-     searched recursively for oof_fold*.pkl and test_prob.pkl from src/unet_cv.py; models are averaged), WORKERS (os.cpu_count()), GRID_T_LO / GRID_CLOSE / GRID_T_HI / GRID_MEAN / GRID_AREA (comma lists
-     overriding the filament.tune grids).
+     searched recursively for oof_fold*.pkl and test_prob.pkl from src/unet_cv.py; models are averaged),
+     WORKERS (os.cpu_count()), GRID_T_LO / GRID_CLOSE / GRID_T_HI / GRID_MEAN / GRID_AREA (comma lists overriding the
+     filament.tune grids), OOF_GLOB (oof_fold*.pkl; e.g. oof_fold0.pkl to tune on one fold).
 """
 import glob
 import os
@@ -50,7 +51,7 @@ if __name__ == "__main__":
         stems = sorted(set.intersection(*(set(m) for m in models)))
         return {s: np.mean([m[s].astype(np.float32) for m in models], 0).astype(np.float16) for s in stems}
 
-    oof = load("oof_fold*.pkl")
+    oof = load(os.environ.get("OOF_GLOB", "oof_fold*.pkl"))
     records = [r for rs in data.physical[data.physical.stem.isin(oof)].record_ids for r in rs]
     print(f"OOF: {len(oof)} images, {len(records)} annotator records, {workers} workers", flush=True)
 
