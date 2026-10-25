@@ -43,5 +43,7 @@ kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.c
   | r34+b4 | probability average of cv1 (ResNet34) and b4, strict grid (t_lo 0.5, close 8, t_hi 0.9, mean ≥ 0.80, area ≥ 300) | 0.426 (OOF) | **0.37** |
   | r34+b4+rx50 | adds a ResNeXt-50 U-Net (5 folds, 2×T4) to the average; strict grid picks t_lo 0.4, close 8, t_hi 0.9, mean ≥ 0.75, area ≥ 200 | 0.429 (OOF) | 0.36 |
   | b4-native (fold 0) | B4 trained and predicted at native 2048 (1024 crops, batch 4); fold-0 PQ 0.421 vs 0.415 for B4 at 1024 under the same grid | — | — |
+  | b4-native | B4 at native 2048, 5 folds on 2×T4 (GPU-resident uint8 crops), strict grid (t_lo 0.4, close 3, t_hi 0.99, mean ≥ 0.85, area ≥ 200) | 0.433 (OOF) | **0.37** |
+  | r34+b4+native | 1024 models and b4-native averaged at 2048 (t_lo 0.4, close 3, t_hi 0.7, mean ≥ 0.80, area ≥ 200) | 0.433 (OOF) | **0.37** |
 - Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is 0.69 under PQ (pre-Aug-7 scores like "0.70" were Dice and are not comparable).
 - A known leaderboard exploit (partial / empty submissions) exists; this pipeline always predicts on all 180 test images.
