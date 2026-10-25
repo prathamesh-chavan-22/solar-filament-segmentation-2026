@@ -85,7 +85,7 @@ if n_gpu > 1 and len(FOLDS) > 1 and env("GPU_WORKER") is None:
     children = [subprocess.Popen([sys.executable, "-u", __file__], env={
         **os.environ, "GPU_WORKER": str(i), "CUDA_VISIBLE_DEVICES": str(i), "FOLDS": ",".join(map(str, g)),
         "TEST_OUT": str(part)}) for i, (g, part) in enumerate(zip(groups, parts))]
-    if any(c.wait() for c in children):
+    if any([c.wait() for c in children]):  # wait for every worker, not just up to the first failure
         sys.exit("a GPU worker failed")
     test_prob = {}
     for g, part in zip(groups, parts):

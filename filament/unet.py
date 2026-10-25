@@ -56,16 +56,18 @@ class CropDataset(Dataset):
 class GpuCrops:
     """The whole training set resident on the GPU; random ``crop``² windows + D4 drawn on the device.
 
-    Replaces the DataLoader (no CPU slicing/copies per step). Images stay float16 (exact); soft targets are stored as
-    round(t·255) uint8 (error ≤ 0.002), so 566 native 2048² images take ~7 GB.
+    Replaces the DataLoader (no CPU slicing/copies per step). Both are stored as uint8 so 566 native 2048² images take
+    ~4.7 GB: disk-normalised images as round(16·x) + 128 (step σ/16, clipped at ±8σ; about the raw 8-bit precision),
+    soft targets as round(255·t) (error ≤ 0.002).
     """
 
     def __init__(self, images, targets, crop, device, seed=0):
         n, size = len(images), images[0].shape[0]
-        self.images = torch.empty((n, size, size), dtype=torch.float16, device=device)
+        self.images = torch.empty((n, size, size), dtype=torch.uint8, device=device)
         self.targets = torch.empty((n, size, size), dtype=torch.uint8, device=device)
         for i, (im, t) in enumerate(zip(images, targets)):
-            self.images[i] = torch.from_numpy(np.array(im, np.float16))  # copy: memmap rows are read-only
+            self.images[i] = torch.from_numpy(np.clip(np.rint(np.asarray(im, np.float32) * 16) + 128, 0, 255)
+                                              .astype(np.uint8))
             self.targets[i] = torch.from_numpy(np.rint(np.asarray(t, np.float32) * 255).astype(np.uint8))
         self.crop, self.size = crop, size
         self.rng = np.random.default_rng(seed)
@@ -76,7 +78,7 @@ class GpuCrops:
                               self.rng.integers(0, self.size - c + 1, b), self.rng.integers(8, size=b)):
             xs.append(d4(self.images[i, y:y + c, x:x + c], k))
             ys.append(d4(self.targets[i, y:y + c, x:x + c], k))
-        return torch.stack(xs)[:, None].float(), torch.stack(ys)[:, None].float() / 255
+        return (torch.stack(xs)[:, None].float() - 128) / 16, torch.stack(ys)[:, None].float() / 255
 
 
 def build_model(encoder="resnet34", pretrained=True):
