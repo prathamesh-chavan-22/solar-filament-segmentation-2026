@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, "/root")
 from filament import H, W, tune  # noqa: E402
 from filament.data import FilamentData  # noqa: E402
-from filament.instances import prob_to_rles  # noqa: E402
+from filament.instances import prob_to_rles, upsample  # noqa: E402
 
 if __name__ == "__main__":
     t0 = time.time()
@@ -49,7 +49,10 @@ if __name__ == "__main__":
                 probs.update(pickle.load(open(p, "rb")))
             models.append(probs)
         stems = sorted(set.intersection(*(set(m) for m in models)))
-        return {s: np.mean([m[s].astype(np.float32) for m in models], 0).astype(np.float16) for s in stems}
+        if len(models) == 1:
+            return {s: models[0][s] for s in stems}
+        # Models may differ in resolution (1024 vs native 2048): average at 2048.
+        return {s: np.mean([upsample(m[s]) for m in models], 0).astype(np.float16) for s in stems}
 
     oof = load(os.environ.get("OOF_GLOB", "oof_fold*.pkl"))
     records = [r for rs in data.physical[data.physical.stem.isin(oof)].record_ids for r in rs]
