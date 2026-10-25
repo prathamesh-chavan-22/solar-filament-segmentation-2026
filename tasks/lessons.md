@@ -21,3 +21,8 @@
 ## 2026-10-25 — The laptop crashes under CPU load too
 - A local CPU-only run (limb_merge, 5 workers, about 6 GB of probabilities in RAM) crashed the laptop, as GPU training had twice before.
 - Rule: run nothing heavy locally, CPU included. When Kaggle slots are full, wait for one; the user asked for exactly that.
+
+## Submissions must not contain overlapping masks
+- The Kaggle scorer returns ERROR (no score) if two instances of one image overlap. Any post-processing that draws
+  pixels (merge bridges, dilation) must resolve overlaps (earlier instances win) and be checked before submitting:
+  pairwise mask IoU per image must be 0.

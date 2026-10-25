@@ -214,7 +214,15 @@ if __name__ == "__main__":
             merges += len(edges)
             st, rles = merged_instances(comps, rles, edges) if len(edges) else (comps, rles)
             keep = (st.area >= area) & (st.peak >= t_hi) & (st["mean"] >= mn)
-            for k, rle in enumerate((r for r, ok in zip(rles, keep) if ok), 1):
+            # Bridges can cross a neighbouring component; the scorer rejects overlapping masks, so earlier ones win.
+            taken, k = np.zeros((H, W), bool), 0
+            for rle in (r for r, ok in zip(rles, keep) if ok):
+                m = mask_utils.decode(rle).astype(bool) & ~taken
+                if not m.any():
+                    continue
+                taken |= m
+                k += 1
+                rle = mask_utils.encode(np.asfortranarray(m.astype(np.uint8)))
                 rows.append({"filament_id": f"{stem}_{k}", "segmentation_rle": rle["counts"].decode("ascii")})
         sub = pd.DataFrame(rows, columns=["filament_id", "segmentation_rle"])
         assert sub.filament_id.is_unique
