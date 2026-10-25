@@ -26,3 +26,8 @@
 - The Kaggle scorer returns ERROR (no score) if two instances of one image overlap. Any post-processing that draws
   pixels (merge bridges, dilation) must resolve overlaps (earlier instances win) and be checked before submitting:
   pairwise mask IoU per image must be 0.
+
+## Kaggle CLI "Authentication required" = expired OAuth access token
+- kagglesdk 2.x only refreshes 30 min *after* expiry (bug in access_token_has_expired). Fix: back up
+  ~/.kaggle/credentials.json, then `KaggleCredentials.load(KaggleClient()).refresh_access_token()` (uses the stored
+  refresh token; new token lasts 12 h). No browser login needed.
