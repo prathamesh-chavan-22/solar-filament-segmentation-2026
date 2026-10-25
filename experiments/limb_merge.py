@@ -8,7 +8,9 @@
    (union + a bridge along the gap). A hand rule (gap ≤ G and bridge probability ≥ L) is the non-learned comparison.
 
 Env: DATA_DIR, WORK_DIR, PROB_DIR (glob of one model directory with oof_fold*.pkl), WORKERS (4), T_LO (0.4), CLOSE (3),
-     LIMIT (0 = all; else first N images per fold, for a smoke run).
+     LIMIT (0 = all; else first N images per fold, for a smoke run),
+     SUBMIT ("" = experiment; "tau,t_hi,min_mean,min_area", e.g. "0.7,0.99,0.85,200": fit the pair classifier on all
+     OOF pairs, merge the test components (PROB_DIR/test_prob.pkl) with it and write WORK_DIR/submission.csv).
 """
 import glob
 import itertools
@@ -49,10 +51,10 @@ def disk(gray):
 
 def analyse(args):
     """One image → component table, their RLEs, candidate pairs (+ features, label) and nearest points for bridging."""
-    stem, file_name, record_ids, prob = args
+    stem, path, record_ids, prob = args
     prob = upsample(np.asarray(prob, np.float32))
     labels, ids, stats, boxes = components(prob, T_LO, CLOSE, 50, 0.5)
-    xc, yc, R = disk(load_gray(data.train_path(file_name)))
+    xc, yc, R = disk(load_gray(path))
     comps, pts = [], []
     for i, (x, y, w, h) in zip(ids, boxes):
         sub = (labels[y:y + h, x:x + w] == i).astype(np.uint8)
@@ -174,7 +176,7 @@ if __name__ == "__main__":
     log(f"{len(oof)} OOF images from {prob_dir}, {len(RECORDS)} records")
 
     with ProcessPoolExecutor(WORKERS) as pool:
-        jobs = ((s, f, list(r), oof.pop(s)) for s, f, r in zip(phys.stem, phys.file_name, phys.record_ids))
+        jobs = ((s, data.train_path(f), list(r), oof.pop(s)) for s, f, r in zip(phys.stem, phys.file_name, phys.record_ids))
         results = {stem: (c, r, p) for stem, c, r, p in pool.map(analyse, jobs, chunksize=4)}
     log(f"components: {sum(len(c) for c, _, _ in results.values())}, "
         f"candidate pairs: {sum(len(p) for _, _, p in results.values())}")
@@ -197,6 +199,29 @@ if __name__ == "__main__":
     log(f"pairs: {len(allp)}, positives {allp.y.sum()} ({allp.y.mean():.1%}), "
         f"overall AUC {roc_auc_score(allp.y, allp.p):.3f}")
     allp.to_csv(WORK / "pairs.csv", index=False)
+
+    if env("SUBMIT"):
+        tau, t_hi, mn, area = map(float, env("SUBMIT").split(","))
+        clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_leaf_nodes=31, random_state=0)
+        clf.fit(allp[FEATURES], allp.y)
+        test = pickle.load(open(next(prob_dir.rglob("test_prob.pkl")), "rb"))
+        paths = {f.stem: f for f in data.test_files}
+        with ProcessPoolExecutor(WORKERS) as pool:
+            tested = list(pool.map(analyse, ((s, paths[s], [], test.pop(s)) for s in sorted(test)), chunksize=4))
+        rows, merges = [], 0
+        for stem, comps, rles, pairs in tested:
+            edges = pairs[clf.predict_proba(pairs[FEATURES])[:, 1] > tau] if len(pairs) else pairs
+            merges += len(edges)
+            st, rles = merged_instances(comps, rles, edges) if len(edges) else (comps, rles)
+            keep = (st.area >= area) & (st.peak >= t_hi) & (st["mean"] >= mn)
+            for k, rle in enumerate((r for r, ok in zip(rles, keep) if ok), 1):
+                rows.append({"filament_id": f"{stem}_{k}", "segmentation_rle": rle["counts"].decode("ascii")})
+        sub = pd.DataFrame(rows, columns=["filament_id", "segmentation_rle"])
+        assert sub.filament_id.is_unique
+        assert all(mask_utils.area({"size": [H, W], "counts": c.encode()}) > 0 for c in sub.segmentation_rle)
+        sub.to_csv(WORK / "submission.csv", index=False)
+        log(f"submission.csv: {len(sub)} filaments over {len(tested)} test images, {merges} merges")
+        sys.exit(0)
 
     options = {"none": lambda p: p.iloc[:0]}
     options |= {f"gbm>{tau}": (lambda p, tau=tau: p[p.p > tau]) for tau in (0.3, 0.5, 0.7, 0.85)}
