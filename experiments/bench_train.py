@@ -1,7 +1,8 @@
 """Smoke benchmark on one GPU: training throughput / peak memory per input-pipeline × layout × compile configuration,
 then full-image inference time. Synthetic data of the real shape (speed does not depend on pixel values).
 
-Env: ENCODER (efficientnet-b4), SIZE (2048), CROP (1024), BATCH (4), N_IMAGES (566), WARM (25), STEPS (50),
+Env: ENCODER (efficientnet-b4; comma list to compare encoders), SIZE (2048), CROP (1024), BATCH (4), N_IMAGES (566),
+     WARM (25), STEPS (50),
      CONFIGS ("loader-nhwc-compile,gpu-nhwc-compile,gpu-nchw-compile,gpu-nchw-eager"), PRED_CHUNKS ("1,2,4").
 """
 import itertools
@@ -18,8 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from filament import unet  # noqa: E402
 
 env = os.environ.get
-ENCODER, SIZE, CROP, BATCH = env("ENCODER", "efficientnet-b4"), int(env("SIZE", 2048)), int(env("CROP", 1024)), \
-    int(env("BATCH", 4))
+SIZE, CROP, BATCH = int(env("SIZE", 2048)), int(env("CROP", 1024)), int(env("BATCH", 4))
 N, WARM, STEPS = int(env("N_IMAGES", 566)), int(env("WARM", 25)), int(env("STEPS", 50))
 CONFIGS = env("CONFIGS", "loader-nhwc-compile,gpu-nhwc-compile,gpu-nchw-compile,gpu-nchw-eager").split(",")
 dev = torch.device("cuda")
@@ -42,11 +42,12 @@ def batches(source, seed=0):
     yield from dl
 
 
-def bench_train(cfg):
+def bench_train(cfg, encoder):
     source, layout, mode = cfg.split("-")
     nhwc = layout == "nhwc"
     torch.cuda.empty_cache(), torch.cuda.reset_peak_memory_stats()
-    model = unet.build_model(ENCODER).to(dev).train()
+    model = unet.build_model(encoder).to(dev).train()
+    params = sum(p.numel() for p in model.parameters()) / 1e6
     net = unet.speedups(model, dev, channels_last=nhwc, compile_model=mode == "compile")
     fmt = torch.channels_last if nhwc else torch.contiguous_format
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, fused=True)
@@ -68,14 +69,14 @@ def bench_train(cfg):
         scaler.update()
     torch.cuda.synchronize()
     sec = (time.time() - t0) / STEPS
-    print(f"train {cfg:22s} {sec:.3f} s/step  {BATCH / sec:5.1f} crops/s  data wait {wait / STEPS:.3f} s/step  "
+    print(f"train {encoder} ({params:.0f}M) {cfg:22s} {sec:.3f} s/step  {BATCH / sec:5.1f} crops/s  data wait {wait / STEPS:.3f} s/step  "
           f"peak {torch.cuda.max_memory_allocated() / 2 ** 30:.1f} GB", flush=True)
     del it, net, model, opt
     return sec
 
 
-def bench_predict():
-    model = unet.build_model(ENCODER).to(dev).eval()
+def bench_predict(encoder):
+    model = unet.build_model(encoder).to(dev).eval()
     x = rng.standard_normal((SIZE, SIZE)).astype(np.float32)
     for layout, chunk in itertools.product(("nchw", "nhwc"), map(int, env("PRED_CHUNKS", "1,2,4").split(","))):
         model.to(memory_format=torch.channels_last if layout == "nhwc" else torch.contiguous_format)
@@ -87,17 +88,23 @@ def bench_predict():
             for _ in range(3):
                 unet.predict_prob(model, x, dev, 8, chunk)
             torch.cuda.synchronize()
-            print(f"predict {layout} chunk {chunk}: {(time.time() - t0) / 3:.2f} s/image (8 TTA views)  "
+            print(f"predict {encoder} {layout} chunk {chunk}: {(time.time() - t0) / 3:.2f} s/image (8 TTA views)  "
                   f"peak {torch.cuda.max_memory_allocated() / 2 ** 30:.1f} GB", flush=True)
         except torch.OutOfMemoryError:
-            print(f"predict {layout} chunk {chunk}: out of memory", flush=True)
+            print(f"predict {encoder} {layout} chunk {chunk}: out of memory", flush=True)
 
 
 if __name__ == "__main__":
-    for cfg in CONFIGS:
+    for encoder in env("ENCODER", "efficientnet-b4").split(","):
+        for cfg in CONFIGS:
+            try:
+                bench_train(cfg, encoder)
+            except torch.OutOfMemoryError:
+                print(f"train {encoder} {cfg}: out of memory", flush=True)
+            except Exception as e:  # unsupported encoder etc.: report and go on with the next one
+                print(f"train {encoder} {cfg}: {type(e).__name__}: {e}", flush=True)
+            torch._dynamo.reset()
         try:
-            bench_train(cfg)
-        except torch.OutOfMemoryError:
-            print(f"train {cfg}: out of memory", flush=True)
-        torch._dynamo.reset()
-    bench_predict()
+            bench_predict(encoder)
+        except Exception as e:
+            print(f"predict {encoder}: {type(e).__name__}: {e}", flush=True)
