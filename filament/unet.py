@@ -61,7 +61,7 @@ class GpuCrops:
     soft targets as round(255·t) (error ≤ 0.002).
     """
 
-    def __init__(self, images, targets, crop, device, seed=0):
+    def __init__(self, images, targets, crop, device, seed=0, aug=False):
         n, size = len(images), images[0].shape[0]
         self.images = torch.empty((n, size, size), dtype=torch.uint8, device=device)
         self.targets = torch.empty((n, size, size), dtype=torch.uint8, device=device)
@@ -69,16 +69,52 @@ class GpuCrops:
             self.images[i] = torch.from_numpy(np.clip(np.rint(np.asarray(im, np.float32) * 16) + 128, 0, 255)
                                               .astype(np.uint8))
             self.targets[i] = torch.from_numpy(np.rint(np.asarray(t, np.float32) * 255).astype(np.uint8))
-        self.crop, self.size = crop, size
+        self.crop, self.size, self.aug = crop, size, aug
         self.rng = np.random.default_rng(seed)
 
     def batch(self, b):
+        if self.aug:
+            return self._augmented(b)
         c, xs, ys = self.crop, [], []
         for i, y, x, k in zip(self.rng.integers(len(self.images), size=b), self.rng.integers(0, self.size - c + 1, b),
                               self.rng.integers(0, self.size - c + 1, b), self.rng.integers(8, size=b)):
             xs.append(d4(self.images[i, y:y + c, x:x + c], k))
             ys.append(d4(self.targets[i, y:y + c, x:x + c], k))
         return (torch.stack(xs)[:, None].float() - 128) / 16, torch.stack(ys)[:, None].float() / 255
+
+    def _augmented(self, b):
+        """D4 + any-angle rotation, scale 0.85–1.15 (bilinear resampling of a larger window), contrast / brightness
+        jitter, and on 30 % of crops each a Gaussian blur (seeing) and additive noise."""
+        c, r = self.crop, self.rng
+        w = min(int(np.ceil(c * 1.15 * np.sqrt(2))) + 2, self.size)  # window that covers the rotated, scaled crop
+        dev = self.images.device
+        xs, ys = [], []
+        for i, y, x, k in zip(r.integers(len(self.images), size=b), r.integers(0, self.size - w + 1, b),
+                              r.integers(0, self.size - w + 1, b), r.integers(8, size=b)):
+            xs.append(d4(self.images[i, y:y + w, x:x + w], k))
+            ys.append(d4(self.targets[i, y:y + w, x:x + w], k))
+        x = (torch.stack(xs)[:, None].float() - 128) / 16
+        t = torch.stack(ys)[:, None].float() / 255
+        ang = torch.from_numpy(r.uniform(-np.pi, np.pi, b)).float()
+        scale = torch.from_numpy(r.uniform(0.85, 1.15, b)).float() * (c / w)  # output c px ← c·scale input px
+        cos, sin = torch.cos(ang) * scale, torch.sin(ang) * scale
+        theta = torch.stack([torch.stack([cos, -sin, torch.zeros(b)], 1), torch.stack([sin, cos, torch.zeros(b)], 1)], 1)
+        grid = F.affine_grid(theta.to(dev), (b, 1, c, c), align_corners=False)
+        x = F.grid_sample(x, grid, mode="bilinear", align_corners=False)
+        t = F.grid_sample(t, grid, mode="bilinear", align_corners=False)
+        on_disk = (x != 0).float()  # keep off-disk pixels at exactly 0, as in preprocess
+        gain = torch.from_numpy(r.uniform(0.8, 1.25, (b, 1, 1, 1))).float().to(dev)
+        bias = torch.from_numpy(r.uniform(-0.2, 0.2, (b, 1, 1, 1))).float().to(dev)
+        x = x * gain + bias
+        for j in np.flatnonzero(r.random(b) < 0.3):
+            sigma = r.uniform(0.5, 1.5)
+            k1 = torch.exp(-0.5 * (torch.arange(-3, 4, device=dev, dtype=torch.float32) / sigma) ** 2)
+            k1 = k1 / k1.sum()
+            xj = F.conv2d(F.pad(x[j:j + 1], (3, 3, 0, 0), mode="reflect"), k1.view(1, 1, 1, 7))
+            x[j:j + 1] = F.conv2d(F.pad(xj, (0, 0, 3, 3), mode="reflect"), k1.view(1, 1, 7, 1))
+        noisy = torch.from_numpy(r.random((b, 1, 1, 1)) < 0.3).float().to(dev)
+        x = x + noisy * torch.randn_like(x) * float(r.uniform(0.02, 0.1))
+        return (x * on_disk).contiguous(), t.contiguous()
 
 
 def build_model(encoder="resnet34", pretrained=True):
@@ -110,9 +146,9 @@ def speedups(model, device, channels_last=True, compile_model=False):
 
 
 def train(model, images, targets, *, steps, batch, crop, lr, device, log_every=200, seed=0,
-          channels_last=False, compile_model=False, amp_dtype=torch.float16, gpu_data=False):
+          channels_last=False, compile_model=False, amp_dtype=torch.float16, gpu_data=False, aug=False):
     if gpu_data:
-        crops = GpuCrops(images, targets, crop, device, seed)
+        crops = GpuCrops(images, targets, crop, device, seed, aug)
         dl = (crops.batch(batch) for _ in range(steps))
     else:
         ds = CropDataset(images, targets, crop, steps * batch, seed)

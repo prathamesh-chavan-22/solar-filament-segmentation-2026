@@ -5,7 +5,7 @@ Outputs in WORK_DIR: fold{k}.pt, oof_fold{k}.pkl ({stem: (S, S) float16}), test_
 Env: DATA_DIR, WORK_DIR, SIZE (1024; 2048 = native), CROP (512), STEPS (5000), BATCH (8), LR (3e-4), ENCODER (resnet34),
      FOLDS ("0,1,2,3,4"), TTA (8), DEBUG (0), CHANNELS_LAST (0), COMPILE (0), AMP (fp16|bf16), PRED_CHUNK (8),
      CACHE_DIR (WORK_DIR; input cache, keep off saved outputs), INIT_DIR (copy existing fold{k}.pt / oof_fold{k}.pkl),
-     GPU_DATA (0). With several GPUs, the folds (training, hold-out and test prediction) are split over one child
+     GPU_DATA (0), AUG (0; needs GPU_DATA=1). With several GPUs, the folds (training, hold-out and test prediction) are split over one child
      process per GPU.
 Local RTX 3050 Ti (4 GB), EfficientNet-B4: BATCH=4 STEPS=10000 CHANNELS_LAST=1 COMPILE=1 PRED_CHUNK=2
 (compiled NHWC: 23 crops/s, 2.2 GB vs 19 crops/s, 3.1 GB eager).
@@ -38,6 +38,7 @@ CHANNELS_LAST, COMPILE = env("CHANNELS_LAST", "0") == "1", env("COMPILE", "0") =
 AMP_DTYPE = {"fp16": torch.float16, "bf16": torch.bfloat16}[env("AMP", "fp16")]
 PRED_CHUNK = int(env("PRED_CHUNK", 8))
 GPU_DATA = env("GPU_DATA", "0") == "1"  # training set resident on the GPU (filament.unet.GpuCrops), no DataLoader
+AUG = env("AUG", "0") == "1"  # GpuCrops only: any-angle rotation, scale, contrast/brightness, blur, noise on top of D4
 WORK = Path(env("WORK_DIR", "work/unet_cv"))
 WORK.mkdir(parents=True, exist_ok=True)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -107,7 +108,7 @@ for k in FOLDS:
         idx = np.flatnonzero(phys.fold.to_numpy() != k)
         unet.train(model, [images[i] for i in idx], [targets[i] for i in idx], steps=STEPS, batch=BATCH, crop=CROP,
                    lr=LR, device=DEVICE, log_every=max(STEPS // 10, 1), seed=k, channels_last=CHANNELS_LAST,
-                   compile_model=COMPILE, amp_dtype=AMP_DTYPE, gpu_data=GPU_DATA)
+                   compile_model=COMPILE, amp_dtype=AMP_DTYPE, gpu_data=GPU_DATA, aug=AUG)
         torch.save(model.state_dict(), weights)
         log(f"fold {k}: trained on {len(idx)} images")
     oof = WORK / f"oof_fold{k}.pkl"
