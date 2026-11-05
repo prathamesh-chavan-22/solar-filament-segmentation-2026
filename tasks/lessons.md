@@ -31,3 +31,9 @@
 - kagglesdk 2.x only refreshes 30 min *after* expiry (bug in access_token_has_expired). Fix: back up
   ~/.kaggle/credentials.json, then `KaggleCredentials.load(KaggleClient()).refresh_access_token()` (uses the stored
   refresh token; new token lasts 12 h). No browser login needed.
+
+## Check the GPU quota before pushing; how to stop a Kaggle kernel
+- On 2026-11-05 I pushed two GPU runs (about 4.5 h + 9.3 h) with only about 9 GPU-hours of quota left. The user had me close one.
+  - Before any GPU push, ask for or compute the remaining weekly quota, and sum the estimated hours of everything running.
+  - A run that can't finish inside the quota loses everything, because outputs are saved only at the end.
+- The CLI has no cancel. `kaggle kernels delete <owner/slug> -y` stops a running kernel, and the delete also removes it.
