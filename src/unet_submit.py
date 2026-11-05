@@ -63,7 +63,7 @@ if __name__ == "__main__":
     table.to_csv(WORK / "sweep_oof.csv", index=False)
     print(table.head(10).to_string(index=False), flush=True)
     best = tune.best_params(table)
-    print(f"best {best} → OOF PQ {table.PQ[0]:.4f} ({time.time() - t0:.0f}s)", flush=True)
+    print(f"best {best} -> OOF PQ {table.PQ[0]:.4f} ({time.time() - t0:.0f}s)", flush=True)
 
     rows = []
     for stem, prob in load("test_prob.pkl").items():
