@@ -2,7 +2,7 @@
 
     python tools/kaggle_run.py sync-code                       # create/version dataset xerneas/solar-filament-code
     python tools/kaggle_run.py push <name> <script> [--gpu L4|T4|none] [--input owner/dataset ...]
-                                    [--kernel-input owner/kernel ...] [--env KEY=VALUE ...]
+                                    [--kernel-input owner/kernel ...] [--env KEY=VALUE ...] [--pip 'pkg==ver']
     python tools/kaggle_run.py status <name>
     python tools/kaggle_run.py fetch <name> [--files REGEX]        # → outputs/kaggle/<name>/
 
@@ -60,7 +60,7 @@ def sync_code():
             kaggle("datasets", "create", "-p", str(stage), "-r", "zip", "-q")
 
 
-def push(name, script, gpu, inputs, kernel_inputs, env):
+def push(name, script, gpu, inputs, kernel_inputs, env, pip=""):
     env = dict(e.split("=", 1) for e in env)
     # Git Bash rewrites "/kaggle/..." args into "C:/Program Files/Git/kaggle/..."; run with MSYS_NO_PATHCONV=1.
     mangled = [k for k, v in env.items() if "/Git/" in v.replace("\\", "/")]
@@ -68,7 +68,7 @@ def push(name, script, gpu, inputs, kernel_inputs, env):
         sys.exit(f"MSYS path conversion mangled {mangled}; rerun with MSYS_NO_PATHCONV=1 or from PowerShell")
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
-        (d / "run.py").write_text(RUNNER.format(pip=PIP, env=json.dumps(env), script=script))
+        (d / "run.py").write_text(RUNNER.format(pip=f"{PIP} {pip}".strip(), env=json.dumps(env), script=script))
         json.dump({
             "id": f"{OWNER}/solar-filament-{name}", "title": f"solar-filament-{name}", "code_file": "run.py",
             "language": "python", "kernel_type": "script", "is_private": True,
@@ -93,6 +93,7 @@ def main():
     p.add_argument("--input", nargs="*", default=[])
     p.add_argument("--kernel-input", nargs="*", default=[])
     p.add_argument("--env", nargs="*", default=[])
+    p.add_argument("--pip", default="", help="extra pinned packages, e.g. timm==1.0.27")
     s = sub.add_parser("status")
     s.add_argument("name")
     f = sub.add_parser("fetch")
@@ -102,7 +103,7 @@ def main():
     if a.cmd == "sync-code":
         sync_code()
     elif a.cmd == "push":
-        push(a.name, a.script, a.gpu, a.input, a.kernel_input, a.env)
+        push(a.name, a.script, a.gpu, a.input, a.kernel_input, a.env, a.pip)
     elif a.cmd == "status":
         kaggle("kernels", "status", f"{OWNER}/solar-filament-{a.name}")
     else:
