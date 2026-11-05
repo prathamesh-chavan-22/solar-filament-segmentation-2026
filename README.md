@@ -45,5 +45,8 @@ kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.c
   | b4-native (fold 0) | B4 trained and predicted at native 2048 (1024 crops, batch 4); fold-0 PQ 0.421 vs 0.415 for B4 at 1024 under the same grid | — | — |
   | b4-native | B4 at native 2048, 5 folds on 2×T4 (GPU-resident uint8 crops), strict grid (t_lo 0.4, close 3, t_hi 0.99, mean ≥ 0.85, area ≥ 200) | 0.433 (OOF) | **0.37** |
   | r34+b4+native | 1024 models and b4-native averaged at 2048 (t_lo 0.4, close 3, t_hi 0.7, mean ≥ 0.80, area ≥ 200) | 0.433 (OOF) | **0.37** |
+  | b4-native + merge | b4-native + learned fragment merging (pair GBM > 0.7, overlaps resolved) | 0.435 (OOF) | 0.37 |
+  | convnext-native | ConvNeXt-Base (tu-convnext_base, 88M) at native 2048, 5 folds, batch 2, 10k steps, lr 1e-4; strict grid | 0.448 (OOF) | **0.39** |
+  | convnext+b4-native | convnext-native and b4-native averaged (t_lo 0.35, t_hi 0.7, mean ≥ 0.80) | 0.447 (OOF) | **0.39** |
 - Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is 0.69 under PQ (pre-Aug-7 scores like "0.70" were Dice and are not comparable).
 - A known leaderboard exploit (partial / empty submissions) exists; this pipeline always predicts on all 180 test images.
