@@ -122,7 +122,10 @@ def build_model(encoder="resnet34", pretrained=True):
     if encoder.startswith("dinov2"):
         from .vit import ViTUNet
         return ViTUNet(encoder, pretrained=pretrained, lora_rank=int(os.environ.get("LORA_RANK", 16)))
-    return smp.Unet(encoder, encoder_weights="imagenet" if pretrained else None, in_channels=1, classes=1)
+    model = smp.Unet(encoder, encoder_weights="imagenet" if pretrained else None, in_channels=1, classes=1)
+    if os.environ.get("GRAD_CKPT", "0") == "1":  # recompute encoder activations in backward: ~half the memory, ~30 % slower
+        model.encoder.model.set_grad_checkpointing(True)
+    return model
 
 
 def loss_fn(logits, target):
