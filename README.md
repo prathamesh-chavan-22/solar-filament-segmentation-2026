@@ -48,5 +48,6 @@ kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.c
   | b4-native + merge | b4-native + learned fragment merging (pair GBM > 0.7, overlaps resolved) | 0.435 (OOF) | 0.37 |
   | convnext-native | ConvNeXt-Base (tu-convnext_base, 88M) at native 2048, 5 folds, batch 2, 10k steps, lr 1e-4; strict grid | 0.448 (OOF) | **0.39** |
   | convnext+b4-native | convnext-native and b4-native averaged (t_lo 0.35, t_hi 0.7, mean ≥ 0.80) | 0.447 (OOF) | **0.39** |
+  | b4-native + aug (folds 0-1) | GpuCrops augmentation: any-angle rotation, scale 0.85–1.15, contrast/brightness, blur, noise. Same settings otherwise; OOF on folds 0-1 vs 0.431 without. Dropped | 0.409 (f0-1) | — |
 - Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is 0.69 under PQ (pre-Aug-7 scores like "0.70" were Dice and are not comparable).
 - A known leaderboard exploit (partial / empty submissions) exists; this pipeline always predicts on all 180 test images.
