@@ -49,5 +49,7 @@ kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.c
   | convnext-native | ConvNeXt-Base (tu-convnext_base, 88M) at native 2048, 5 folds, batch 2, 10k steps, lr 1e-4; strict grid | 0.448 (OOF) | **0.39** |
   | convnext+b4-native | convnext-native and b4-native averaged (t_lo 0.35, t_hi 0.7, mean ≥ 0.80) | 0.447 (OOF) | **0.39** |
   | b4-native + aug (folds 0-1) | GpuCrops augmentation: any-angle rotation, scale 0.85–1.15, contrast/brightness, blur, noise. Same settings otherwise; OOF on folds 0-1 vs 0.431 without. Dropped | 0.409 (f0-1) | — |
+  | convnext-dino5 | ConvNeXt-Base with DINOv3 weights (tu-convnext_base.dinov3_lvd1689m), native 5-fold, same recipe | 0.430 (OOF) | 0.37 |
+  | dino+convnext(+b4) | dino5 averaged with convnext-native (and b4-native); t_lo 0.35, t_hi 0.7, mean ≥ 0.80 | 0.444 (OOF) | 0.38 |
 - Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is 0.69 under PQ (pre-Aug-7 scores like "0.70" were Dice and are not comparable).
 - A known leaderboard exploit (partial / empty submissions) exists; this pipeline always predicts on all 180 test images.
