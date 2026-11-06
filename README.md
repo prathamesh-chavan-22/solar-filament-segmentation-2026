@@ -52,5 +52,6 @@ kaggle competitions submit filament-segmentation-2026 -f outputs/v1/submission.c
   | convnext-dino5 | ConvNeXt-Base with DINOv3 weights (tu-convnext_base.dinov3_lvd1689m), native 5-fold, same recipe | 0.430 (OOF) | 0.37 |
   | dino+convnext(+b4) | dino5 averaged with convnext-native (and b4-native); t_lo 0.35, t_hi 0.7, mean ≥ 0.80 | 0.444 (OOF) | 0.38 |
   | convnext-native + refiner | stage-2 refiner (experiments/refiner.py): U-Net R34 on 256² crops around each kept instance (image, p, seed), target = mean of matched GT masks, 5-fold OOF, D4; output threshold 0.45. Seeds 0.4478 | 0.4505 (OOF) | **0.39** |
+  | convnext 2 seeds + refiner | convnext-native (5f) + convnext-seed2 (SEED=1, 4f, 8k steps) averaged, rule 0.4/3/0.7/0.85/200, then the refiner (0.45). OOF on folds 0-3: seed1 0.4474, seed2 0.4458, avg 0.4496 | 0.4496 (OOF f0-3, before refiner) | **0.39** |
 - Inter-annotator PQ is low (~0.45–0.6 on samples), so the label noise caps the score; the public LB top is 0.69 under PQ (pre-Aug-7 scores like "0.70" were Dice and are not comparable).
 - A known leaderboard exploit (partial / empty submissions) exists; this pipeline always predicts on all 180 test images.
