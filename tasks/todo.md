@@ -6,7 +6,13 @@
 - [x] Native B4 5-fold (OOF 0.4329, LB 0.37); ConvNeXt-B f0-1 + B4 (OOF f0-1 0.4424, LB 0.38)
 - [x] Limb cut-off (no gain), learned fragment merging (+0.002 OOF, LB 0.37)
 
-## Resume here (stopped 2026-10-25 evening; start morning of 2026-10-26)
+## Status 2026-11-06
+- DINOv3 ConvNeXt-B: OOF 0.430 / LB 0.37; ensembles 0.38 → dropped (README). Best stays ConvNeXt-B 0.39.
+- Kaggle `convnext-seed2` RUNNING (ConvNeXt-B, SEED=1, folds 0-3, 8k steps, ~3 h): average with convnext-native5.
+- Local GPU: `experiments/refiner.py` (stage-2 refiner) training 5 folds (~1.5 h, log work/refiner_train.log);
+  then `MODE=score`, and `MODE=submit` if it beats 0.4478 OOF. Paste round trip verified (0.4478 → 0.4478).
+
+## Resume here (old) (stopped 2026-10-25 evening; start morning of 2026-10-26)
 State when stopped:
 - Kaggle `convnext-native5` (ConvNeXt-B folds 2,3,4 + INIT folds 0,1, native 2048) was RUNNING on 2×T4, started
   ~09:52 UTC, expected done ~13:30 UTC. Only ~1.5 h of Kaggle GPU quota is left this week, so no more GPU kernels.
