@@ -33,6 +33,7 @@ SIZE, CROP = int(env("SIZE", 1024)), int(env("CROP", 512))
 STEPS, BATCH, LR = int(env("STEPS", 5000)), int(env("BATCH", 8)), float(env("LR", 3e-4))
 ENCODER, TTA = env("ENCODER", "resnet34"), int(env("TTA", 8))
 FOLDS = [int(k) for k in env("FOLDS", "0,1,2,3,4").split(",")]
+SEED = int(env("SEED", 0))  # second-seed runs: different decoder init and crop stream per fold
 # Kernel-level speedups (see filament.unet.speedups): NHWC convs, Triton-compiled graph, AMP dtype; TTA views per pass.
 CHANNELS_LAST, COMPILE = env("CHANNELS_LAST", "0") == "1", env("COMPILE", "0") == "1"
 AMP_DTYPE = {"fp16": torch.float16, "bf16": torch.bfloat16}[env("AMP", "fp16")]
@@ -106,8 +107,11 @@ for k in FOLDS:
         log(f"fold {k}: loaded {weights.name}")
     else:
         idx = np.flatnonzero(phys.fold.to_numpy() != k)
+        if SEED:
+            torch.manual_seed(1000 * SEED + k)
+            model = unet.build_model(ENCODER, pretrained=True)
         unet.train(model, [images[i] for i in idx], [targets[i] for i in idx], steps=STEPS, batch=BATCH, crop=CROP,
-                   lr=LR, device=DEVICE, log_every=max(STEPS // 10, 1), seed=k, channels_last=CHANNELS_LAST,
+                   lr=LR, device=DEVICE, log_every=max(STEPS // 10, 1), seed=k + 1000 * SEED, channels_last=CHANNELS_LAST,
                    compile_model=COMPILE, amp_dtype=AMP_DTYPE, gpu_data=GPU_DATA, aug=AUG)
         torch.save(model.state_dict(), weights)
         log(f"fold {k}: trained on {len(idx)} images")
