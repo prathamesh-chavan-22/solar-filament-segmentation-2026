@@ -34,12 +34,11 @@
 \title{Native-Resolution ConvNeXt U-Net with Hysteresis Instances and a Crop Refiner}
 \subtitle{A Solution to the Solar Filament Segmentation Challenge 2026} % DO NOT CHANGE
 
-% TODO(author): replace the name and email below with your own before submitting.
-\author{AUTHOR NAME}
+\author{Prathamesh Chavan}
 \affiliation{%
-  \country{COUNTRY}
+  \country{India}
 }
-\email{author@example.com}
+\email{prathamesh011official@gmail.com}
 
 \begin{abstract}
     This report describes our solution to the Solar Filament Segmentation Challenge~2026, a Kaggle competition on automatic segmentation of solar filaments in GONG H-$\alpha$ observations. We predict a per-pixel filament probability with a U-Net whose ConvNeXt-Base encoder runs on the full $2048^2$ disk, turn it into instances with a hysteresis rule tuned directly for Panoptic Quality (PQ), and redraw every instance with a second, crop-level U-Net. All choices were made on out-of-fold predictions over the 707 training images, with folds grouped by observation date. The pipeline reaches an out-of-fold PQ of 0.451 (95\% bootstrap interval 0.442--0.460) and 0.39 on the public leaderboard, without any external annotations. Code, weights and a notebook that reproduces the submission are public.
