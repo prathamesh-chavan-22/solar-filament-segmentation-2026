@@ -29,7 +29,9 @@ H-alpha 2048² ─► disk normalisation ─► Stage 1: U-Net (ConvNeXt-Base), 
 `notebooks/final_submission.ipynb` (source: `src/final_submission.py`) rebuilds `submission.csv` from the trained
 weights, without training. The weights (9 ConvNeXt U-Nets, 5 refiners) are attached to the GitHub release
 [`weights-v1`](../../releases/tag/weights-v1); the notebook downloads them and checks their SHA-256
-(`src/weights.sha256`). About 1 h on 2×T4 (Kaggle), longer on one GPU.
+(`src/weights.sha256`). About 1 h on 2×T4 (Kaggle), longer on one GPU. Verified on Kaggle 2×T4 (58 min): the
+notebook's output matches the submitted file instance for instance (same 1,130 ids, mean IoU 0.99985, 88% of masks
+pixel-identical; the rest differ by fp16 GPU arithmetic).
 ```bash
 pip install -r requirements.txt
 kaggle competitions download filament-segmentation-2026 -p data && unzip -q data/*.zip -d data
