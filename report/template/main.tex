@@ -172,12 +172,13 @@
         \item A learned instance scorer over a threshold ladder, choosing components by gradient boosting with an exact tree DP: below the hysteresis rule.
         \item Learned merging of fragments across gaps: $+0.002$ OOF, no change on the leaderboard.
         \item Special handling near the limb: no gain.
+        \item Training the refiner to also erase unmatched instances (empty target), so that it doubles as a selector: 0.442, below the hysteresis masks alone, because it removed many correct instances (TP $5172ightarrow4868$).
     \end{itemize}
 
 \subsection{Strengths, weaknesses and improvements}
     \textbf{Strengths.} The pipeline is short, deterministic at inference, and produces non-overlapping instances by construction. Splits and merges are rare: 331 and 163 against 8,199 ground-truth instances, about 4\% and 2\%. OOF estimates were stable across folds (std 0.011) and tracked the public leaderboard.
     \textbf{Weaknesses.} Recall is the main loss: 37\% of ground-truth instances are missed, mostly small, faint filaments that we suppress on purpose because a doubtful instance costs as much as a miss. The labels themselves limit the score: on images with several annotators, PQ between annotators was roughly 0.45--0.6 in our checks, so a large part of the remaining gap is label disagreement. Long filaments with faint gaps are sometimes split differently from the annotators (Figure~\ref{fig:examples}).
-    \textbf{Improvements.} Training the refiner to also reject false positives (a learned selection step), larger encoders (ConvNeXt-Large fits a T4 with gradient checkpointing but exceeded our compute budget), and a loss that models annotator disagreement explicitly.
+    \textbf{Improvements.} A selection step that is better calibrated than our attempt above (e.g.\ a separate classifier on refined instances), larger encoders (ConvNeXt-Large fits a T4 with gradient checkpointing but exceeded our compute budget), and a loss that models annotator disagreement explicitly.
 
 \subsection{Reproducibility and data use}
     The repository contains the training code, the trained weights (as release assets), \texttt{requirements.txt}, and a notebook that rebuilds the submission from the weights in about one hour on two T4 GPUs. We used only the competition training data and ImageNet-pretrained encoders. The public MAGFiLO release also contains annotations for the challenge's test images, so we never downloaded or used any external annotations.

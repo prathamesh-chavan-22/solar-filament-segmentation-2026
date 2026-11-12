@@ -93,3 +93,4 @@ Public leaderboard scores are rounded to two decimals by Kaggle.
   | dino+convnext(+b4) | dino5 averaged with convnext-native (and b4-native); t_lo 0.35, t_hi 0.7, mean ≥ 0.80 | 0.444 (OOF) | 0.38 |
   | convnext-native + refiner | stage-2 refiner (experiments/refiner.py): U-Net R34 on 256² crops around each kept instance (image, p, seed), target = mean of matched GT masks, 5-fold OOF, D4; output threshold 0.45. Seeds 0.4478 | 0.4505 (OOF) | **0.39** |
   | convnext 2 seeds + refiner | convnext-native (5f) + convnext-seed2 (SEED=1, 4f, 8k steps) averaged, rule 0.4/3/0.7/0.85/200, then the refiner (0.45). OOF on folds 0-3: seed1 0.4474, seed2 0.4458, avg 0.4496 | 0.4496 (OOF f0-3, before refiner) | **0.39** |
+  | refiner, unmatched → empty | refiner also trained to erase unmatched instances (TRAIN_UNMATCHED=1); removes too many true positives (TP 5172 → 4868). Dropped | 0.442 (OOF) | — |
