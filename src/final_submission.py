@@ -17,7 +17,9 @@
 # **Inputs (Kaggle):** the competition data; `xerneas/solar-filament-code` (this repository's `filament/`,
 # `experiments/`); stage-1 weights from the notebooks `xerneas/solar-filament-convnext-native5` (seed 0, folds 0-4)
 # and `xerneas/solar-filament-convnext-seed2` (seed 1, folds 0-3); refiner weights `xerneas/solar-filament-refiner`.
-# Locally, set `DATA_DIR`, `CODE_DIR`, `WEIGHTS_DIR` instead. GPU: 2×T4 ≈ 1 h (one GPU works, twice as long).
+# Elsewhere (or without those inputs) the weights are downloaded from the repository's GitHub release `weights-v1`
+# and checked against `src/weights.sha256`. Locally, set `DATA_DIR` to the unzipped competition data.
+# GPU: 2×T4 ≈ 1 h (one GPU works, about twice as long).
 
 # %%
 import importlib.util
@@ -30,10 +32,13 @@ if missing:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", *missing], check=False)
 
 # %%
+import fnmatch
 import glob
+import hashlib
 import os
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -42,13 +47,17 @@ import torch
 from pycocotools import mask as mask_utils
 
 ON_KAGGLE = Path("/kaggle/input").exists()
-DATA_DIR = os.environ.get("DATA_DIR", "/kaggle/input" if ON_KAGGLE else "data")
-WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/kaggle/input" if ON_KAGGLE else "outputs/kaggle")
-OUT_DIR = Path(os.environ.get("OUT_DIR", "/kaggle/working" if ON_KAGGLE else "work/final"))
+# Our code: the code dataset (Kaggle) or this repository (found upwards from the working directory).
+if ON_KAGGLE:
+    CODE_DIR = str(Path(sorted(glob.glob("/kaggle/input/**/filament/__init__.py", recursive=True))[0]).parent.parent)
+else:
+    CODE_DIR = str(next(p for p in (Path.cwd(), *Path.cwd().parents) if (p / "filament" / "__init__.py").exists()))
+DATA_DIR = os.environ.get("DATA_DIR", "/kaggle/input" if ON_KAGGLE else f"{CODE_DIR}/data")
+WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/kaggle/input" if ON_KAGGLE else f"{CODE_DIR}/weights")  # searched first
+DOWNLOAD_DIR = Path("/tmp/weights" if ON_KAGGLE else WEIGHTS_DIR)  # release downloads go here
+RELEASE = "https://github.com/prathamesh-chavan-22/solar-filament-segmentation-2026/releases/download/weights-v1"
+OUT_DIR = Path(os.environ.get("OUT_DIR", "/kaggle/working" if ON_KAGGLE else f"{CODE_DIR}/work/final"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-# Our code: the repository root (local) or the code dataset (Kaggle), found by the package marker.
-CODE_DIR = os.environ.get("CODE_DIR") or str(Path(sorted(glob.glob(
-    "/kaggle/input/**/filament/__init__.py" if ON_KAGGLE else "filament/__init__.py", recursive=True))[0]).parent.parent)
 sys.path[:0] = [CODE_DIR, os.path.join(CODE_DIR, "experiments")]
 
 # Settings of the final submission (all tuned on out-of-fold PQ; see the report).
@@ -69,10 +78,37 @@ gpus = [torch.device(f"cuda:{i}") for i in range(torch.cuda.device_count())] or 
 log(f"code {CODE_DIR}; {len(test_files)} test images; devices {gpus}")
 
 
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def download(folder, pattern):
+    """Release assets are named `<folder>__<file>`; their SHA-256 sums are listed in src/weights.sha256."""
+    out = []
+    for line in open(os.path.join(CODE_DIR, "src", "weights.sha256")):
+        digest, name = line.split()
+        f, file = name.split("__")
+        if f != folder or not fnmatch.fnmatch(file, pattern):
+            continue
+        dst = DOWNLOAD_DIR / folder / file
+        if not dst.exists() or sha256(dst) != digest:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            log(f"downloading {name}")
+            urllib.request.urlretrieve(f"{RELEASE}/{name}", dst)
+            assert sha256(dst) == digest, f"checksum mismatch for {name}"
+        out.append(str(dst))
+    return sorted(out)
+
+
 def weight_files(folder, pattern):
-    files = sorted(glob.glob(f"{WEIGHTS_DIR}/**/*{folder}*/**/{pattern}", recursive=True)
-                   or glob.glob(f"{WEIGHTS_DIR}/{folder}/{pattern}"))
-    assert files, f"no {pattern} under {WEIGHTS_DIR} for {folder}"
+    """Weights of one model family: mounted Kaggle inputs or a local folder first, else the GitHub release."""
+    files = sorted(glob.glob(f"{WEIGHTS_DIR}/**/*{folder}*/**/{pattern}", recursive=True))
+    files = files or download(folder, pattern)
+    assert files, f"no {pattern} for {folder}"
     return files
 
 
@@ -109,7 +145,7 @@ for t in threads:
 for t in threads:
     t.join()
 test_prob = {stem: np.mean([prob[s][stem] for s in prob], 0).astype(np.float16) for stem in stems}
-del prob, images
+prob.clear(), images.clear()  # free ~6 GB of host memory
 log("stage 1 done")
 
 # %% [markdown]
