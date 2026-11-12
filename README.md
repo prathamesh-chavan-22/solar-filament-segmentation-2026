@@ -3,8 +3,9 @@
 Solution to the Kaggle challenge [filament-segmentation-2026](https://www.kaggle.com/competitions/filament-segmentation-2026):
 instance segmentation of solar filaments in GONG H-alpha images, scored by Panoptic Quality (PQ).
 
-**Result:** out-of-fold PQ **0.451** on all 707 training images (95% bootstrap interval 0.442–0.460), public
-leaderboard **0.39**. No data beyond the competition training set was used (see *Data use* below).
+**Result:** public leaderboard **0.39** PQ (180 test images; YOLO11-seg baseline 0.28). Cross-validation on the 707
+training images (date-grouped folds) gives 0.451 and is used for the error bars and error analysis in the report.
+No data beyond the competition training set was used (see *Data use* below).
 Technical report: [`report/template/main.pdf`](report/template/main.pdf).
 
 ## Pipeline

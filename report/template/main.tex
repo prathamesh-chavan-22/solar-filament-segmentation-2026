@@ -41,7 +41,7 @@
 \email{prathamesh011official@gmail.com}
 
 \begin{abstract}
-    This report describes our solution to the Solar Filament Segmentation Challenge~2026, a Kaggle competition on automatic segmentation of solar filaments in GONG H-$\alpha$ observations. We predict a per-pixel filament probability with a U-Net whose ConvNeXt-Base encoder runs on the full $2048^2$ disk, turn it into instances with a hysteresis rule tuned directly for Panoptic Quality (PQ), and redraw every instance with a second, crop-level U-Net. All choices were made on out-of-fold predictions over the 707 training images, with folds grouped by observation date. The pipeline reaches an out-of-fold PQ of 0.451 (95\% bootstrap interval 0.442--0.460) and 0.39 on the public leaderboard, without any external annotations. Code, weights and a notebook that reproduces the submission are public.
+    This report describes our solution to the Solar Filament Segmentation Challenge~2026, a Kaggle competition on automatic segmentation of solar filaments in GONG H-$\alpha$ observations. We predict a per-pixel filament probability with a U-Net whose ConvNeXt-Base encoder runs on the full $2048^2$ disk, turn it into instances with a hysteresis rule tuned directly for Panoptic Quality (PQ), and redraw every instance with a second, crop-level U-Net. The pipeline scores 0.39 PQ on the public leaderboard (up from 0.28 for a YOLO11-seg baseline), without any external annotations. Thresholds were tuned on date-grouped cross-validation over the 707 training images, which also provides the error bars and error analysis reported here. Code, weights and a notebook that reproduces the submission are public.
 \end{abstract}
 
 \maketitle
@@ -107,28 +107,27 @@
 \section{Evaluation}\label{sec:evaluation}
 
 \subsection{Strategy}
-    We report PQ over the OOF predictions of all 707 images and 1,154 records, which is the same pooled computation as the challenge metric. Uncertainty is given in two ways: the standard deviation of PQ across the five date-grouped folds, and a 95\% bootstrap interval obtained by resampling images ($B=2000$; all records of an image move together). For the refiner we bootstrap the \emph{paired} difference on the same images. Public leaderboard scores (180 test images, shown to two decimals) are listed for reference. Throughout the competition they sat about 0.05--0.06 below OOF, with the same ranking.
+    The primary measure is the public leaderboard: PQ on the 180 test images, which Kaggle reports to two decimals. Because two decimals cannot resolve changes below about 0.01, and the leaderboard gives no error bars or error breakdown, we complement it with cross-validation: PQ over the out-of-fold (OOF) predictions of all 707 training images and 1,154 records, computed like the challenge metric. Uncertainty comes from the standard deviation across the five date-grouped folds and from a 95\% bootstrap over images ($B=2000$; all records of an image move together; for the refiner, the \emph{paired} difference). OOF scores sat 0.05--0.06 above the leaderboard throughout, with the same ranking.
 
 \subsection{Results}
-    Table~\ref{tab:progress} traces the development. The largest gains came from treating the problem as semantic segmentation with a PQ-tuned instance rule, not as direct instance segmentation (YOLO11-seg \cite{yolo11}), from native resolution, and from a stronger encoder. Table~\ref{tab:stats} breaks down the final OOF result. The refiner improves PQ by $+0.0027$ (95\% interval $[+0.0005, +0.0048]$; 0.95\% of bootstrap draws $\leq 0$) and helps in four of five folds. Almost all of the gain is in segmentation quality (SQ $0.681\rightarrow0.685$; Figure~\ref{fig:iou}). Detection (RQ) is nearly unchanged, as expected, since the refiner redraws instances but does not select them. Averaging two seeds adds a further $+0.0022$ on folds 0--3 (0.4474 $\rightarrow$ 0.4496).
+    Table~\ref{tab:progress} traces the development on the leaderboard, from 0.28 to 0.39. The largest gains came from treating the problem as semantic segmentation with a PQ-tuned instance rule instead of direct instance segmentation (YOLO11-seg \cite{yolo11}: $0.28\rightarrow0.35$), from a stronger encoder and native resolution ($0.35\rightarrow0.37$), and from ConvNeXt-Base ($0.37\rightarrow0.39$). The refiner and the second seed keep the leaderboard at 0.39; their gains are below its two-decimal resolution and are measured on OOF instead (Table~\ref{tab:stats}). The refiner improves PQ by $+0.0027$ (95\% interval $[+0.0005, +0.0048]$; 0.95\% of bootstrap draws $\leq 0$) and helps in four of five folds. Almost all of the gain is in segmentation quality (SQ $0.681\rightarrow0.685$; Figure~\ref{fig:iou}). Detection (RQ) is nearly unchanged, as expected, since the refiner redraws instances but does not select them. Averaging two seeds adds a further $+0.0022$ on folds 0--3 (0.4474 $\rightarrow$ 0.4496).
 
 \begin{table}[t]
   \centering
-  \caption{Development history: OOF PQ (707 images) and public leaderboard. $^\dagger$hold-out fold 0 only; $^\ddagger$folds 0--3.}
+  \caption{Development history: public leaderboard PQ (180 test images, two decimals) and cross-validation PQ (OOF, 707 images). $^\dagger$hold-out fold 0 only.}
   \label{tab:progress}
   \small
   \begin{tabular}{@{}lcc@{}}
     \toprule
-    Model & OOF PQ & Public \\
+    Model & Public & OOF \\
     \midrule
-    YOLO11m-seg, $1024^2$ & 0.313$^\dagger$ & 0.28 \\
-    U-Net R34, $1024^2$, soft target, hysteresis & 0.417 & 0.35 \\
-    U-Net EfficientNet-B4, $1024^2$ & 0.422 & 0.36 \\
-    U-Net EfficientNet-B4, native $2048^2$ & 0.433 & 0.37 \\
-    U-Net ConvNeXt-Base, native $2048^2$ & 0.448 & 0.39 \\
-    \quad + crop refiner & \textbf{0.451} & 0.39 \\
-    \quad 2 seeds, before refiner & 0.450$^\ddagger$ & -- \\
-    \quad 2 seeds + crop refiner (final) & -- & 0.39 \\
+    YOLO11m-seg, $1024^2$ & 0.28 & 0.313$^\dagger$ \\
+    U-Net R34, $1024^2$, soft target, hysteresis & 0.35 & 0.417 \\
+    U-Net EfficientNet-B4, $1024^2$ & 0.36 & 0.422 \\
+    U-Net EfficientNet-B4, native $2048^2$ & 0.37 & 0.433 \\
+    U-Net ConvNeXt-Base, native $2048^2$ & \textbf{0.39} & 0.448 \\
+    \quad + crop refiner & \textbf{0.39} & 0.451 \\
+    \quad 2 seeds + crop refiner (final) & \textbf{0.39} & -- \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -164,15 +163,15 @@
 \end{figure}
 
 \subsection{What did not help}
-    Several ideas were tested on OOF and dropped:
+    Leaderboard scores are given where the idea was submitted; the others were dropped on OOF first.
     \begin{itemize}
-        \item Photometric and geometric augmentation beyond D4 (rotation, scale, contrast, blur, noise): $-0.022$ on folds 0--1.
-        \item DINOv3-pretrained ConvNeXt weights \cite{simeoni2025dinov3}: $-0.018$; in an ensemble with the ImageNet model, $-0.004$.
-        \item Averaging ConvNeXt with weaker encoders (EfficientNet-B4): no gain.
-        \item A learned instance scorer over a threshold ladder, choosing components by gradient boosting with an exact tree DP: below the hysteresis rule.
-        \item Learned merging of fragments across gaps: $+0.002$ OOF, no change on the leaderboard.
+        \item DINOv3-pretrained ConvNeXt weights \cite{simeoni2025dinov3}: 0.37 on the leaderboard (ImageNet weights 0.39); averaged with the ImageNet model, 0.38.
+        \item Averaging ConvNeXt with EfficientNet-B4: 0.39, no gain.
+        \item Learned merging of fragments across gaps: 0.37, same as without (EfficientNet-B4).
+        \item A learned instance scorer (gradient boosting over a threshold ladder): 0.35, same as the hysteresis rule it replaced.
+        \item Photometric and geometric augmentation beyond D4 (rotation, scale, contrast, blur, noise): $-0.022$ OOF on folds 0--1, not submitted.
         \item Special handling near the limb: no gain.
-        \item Training the refiner to also erase unmatched instances (empty target), so that it doubles as a selector: 0.442, below the hysteresis masks alone, because it removed many correct instances (TP $5172\rightarrow4868$).
+        \item Training the refiner to also erase unmatched instances (empty target), so that it doubles as a selector: 0.442 OOF, below the hysteresis masks alone, because it removed many correct instances (TP $5172\rightarrow4868$).
     \end{itemize}
 
 \subsection{Strengths, weaknesses and improvements}
