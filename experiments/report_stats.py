@@ -65,6 +65,8 @@ def main():
     for s, r in zip(meta.stem, seeds):
         methods["seeds"][s].append(r)
     methods["refined"].update(refiner.paste(meta, probs, float(os.environ.get("THRESH", 0.45))))
+    if os.environ.get("QUAL_ONLY") == "1":
+        return qualitative(phys, methods["refined"])
     jobs = [(m, rid, preds[s]) for m, preds in methods.items() for s, rids in zip(phys.stem, phys.record_ids)
             for rid in rids]
     with ProcessPoolExecutor(int(os.environ.get("WORKERS", 8))) as pool:
@@ -132,27 +134,35 @@ def uncertainty(rec, phys, B=2000):
     print(table.T.to_string(), flush=True)
 
 
-def qualitative(phys, preds, n=3):
-    """Image crops with the annotators' instances (left) and our refined instances (right)."""
+def qualitative(phys, preds, n=3, win=1024):
+    """Rows of 1024² windows around an annotated filament: image, annotator (medoid record), ours (refined)."""
     import cv2
     import matplotlib.pyplot as plt
     from filament.data import load_gray
-    rng = np.random.default_rng(0)
-    pick = phys.iloc[rng.choice(len(phys), n, replace=False)]
-    fig, ax = plt.subplots(n, 2, figsize=(6, 3 * n))
+    rng = np.random.default_rng(int(os.environ.get("QUAL_SEED", 3)))
+    pick = phys[[len(data.record_rles(r)) >= 4 for r in phys.train_record]]
+    pick = pick.iloc[rng.choice(len(pick), n, replace=False)]
+    fig, ax = plt.subplots(n, 3, figsize=(7, 2.35 * n))
     for i, r in enumerate(pick.itertuples()):
         gray = load_gray(data.train_path(r.file_name))
-        for j, rles in enumerate((list(data.record_rles(r.train_record)), preds[r.stem])):
+        gts = list(data.record_rles(r.train_record))
+        x, y, w, h = mask_utils.toBbox(gts[int(np.argmax(mask_utils.area(gts)))])
+        x0 = int(np.clip(x + w / 2 - win / 2, 0, gray.shape[1] - win))
+        y0 = int(np.clip(y + h / 2 - win / 2, 0, gray.shape[0] - win))
+        panels = [[], gts, preds[r.stem]]
+        for j, rles in enumerate(panels):
             rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
             for k, rle in enumerate(rles):
                 m = mask_utils.decode(rle).astype(bool)
                 col = np.array(plt.cm.tab10(k % 10)[:3]) * 255
-                rgb[m] = (0.45 * rgb[m] + 0.55 * col).astype(np.uint8)
-            ax[i, j].imshow(rgb[256:1792, 256:1792])
-            ax[i, j].set_axis_off()
-            ax[i, j].set_title(("annotator (medoid record)", "ours (refined)")[j] + f" — {r.stem}", fontsize=7)
-    fig.tight_layout()
-    fig.savefig(OUT / "figures" / "qualitative.pdf", dpi=200)
+                rgb[m] = (0.35 * rgb[m] + 0.65 * col).astype(np.uint8)
+            ax[i, j].imshow(rgb[y0:y0 + win, x0:x0 + win])
+            ax[i, j].set_xticks([]), ax[i, j].set_yticks([])
+            if i == 0:
+                ax[i, j].set_title(("H-alpha image", "annotator", "ours (refined)")[j], fontsize=9)
+        ax[i, 0].set_ylabel(r.stem, fontsize=7)
+    fig.tight_layout(pad=0.3)
+    fig.savefig(OUT / "figures" / "qualitative.pdf", dpi=170)
 
 
 if __name__ == "__main__":
